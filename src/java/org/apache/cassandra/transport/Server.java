@@ -22,6 +22,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.EnumMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLContext;
@@ -178,6 +179,7 @@ public class Server implements CassandraDaemon.Server
     public static class ConnectionTracker implements Connection.Tracker
     {
         public final ChannelGroup allChannels = new DefaultChannelGroup();
+        private final ConcurrentHashMap<Integer, Connection> connections = new ConcurrentHashMap<>();
         private final EnumMap<Event.Type, ChannelGroup> groups = new EnumMap<Event.Type, ChannelGroup>(Event.Type.class);
 
         public ConnectionTracker()
@@ -189,6 +191,7 @@ public class Server implements CassandraDaemon.Server
         public void addConnection(Channel ch, Connection connection)
         {
             allChannels.add(ch);
+            connections.putIfAbsent(ch.getId(), connection);
         }
 
         public void register(Event.Type type, Channel ch)
