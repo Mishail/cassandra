@@ -18,13 +18,18 @@
 package org.apache.cassandra.transport;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 
@@ -45,6 +50,8 @@ import org.apache.cassandra.transport.messages.EventMessage;
 import org.jboss.netty.bootstrap.ServerBootstrap;
 import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.ChannelFactory;
+import org.jboss.netty.channel.ChannelFuture;
+import org.jboss.netty.channel.ChannelFutureListener;
 import org.jboss.netty.channel.ChannelPipeline;
 import org.jboss.netty.channel.ChannelPipelineFactory;
 import org.jboss.netty.channel.Channels;
@@ -109,11 +116,11 @@ public class Server implements CassandraDaemon.Server
 
     public void start()
     {
-	    if(!isRunning())
-	    {
-                run();
-                isRunning.set(true);
-	    }
+        if (!isRunning())
+        {
+            run();
+            isRunning.set(true);
+        }
     }
 
     public void stop()
@@ -175,23 +182,42 @@ public class Server implements CassandraDaemon.Server
         logger.info("Stop listening for CQL clients");
     }
 
+    public interface ConnectionTrackerMBean
+    {
+        int getConnectionsCount();
+        
+        Set<String> listConnections();
+    }
 
-    public static class ConnectionTracker implements Connection.Tracker
+    public static class ConnectionTracker implements Connection.Tracker, ConnectionTrackerMBean, ChannelFutureListener
     {
         public final ChannelGroup allChannels = new DefaultChannelGroup();
-        private final ConcurrentHashMap<Integer, Connection> connections = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<Integer, Connection> allConnections = new ConcurrentHashMap<>();
         private final EnumMap<Event.Type, ChannelGroup> groups = new EnumMap<Event.Type, ChannelGroup>(Event.Type.class);
 
         public ConnectionTracker()
         {
             for (Event.Type type : Event.Type.values())
                 groups.put(type, new DefaultChannelGroup(type.toString()));
+
+            MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+            try
+            {
+                mbs.registerMBean(this, new ObjectName("org.apache.cassandra.transport:type=ConnectionTracker"));
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
         }
 
         public void addConnection(Channel ch, Connection connection)
         {
             allChannels.add(ch);
-            connections.putIfAbsent(ch.getId(), connection);
+            Connection added = allConnections.put(ch.getId(), connection);
+            if (added == null) {
+                ch.getCloseFuture().addListener(this);
+            }
         }
 
         public void register(Event.Type type, Channel ch)
@@ -212,7 +238,31 @@ public class Server implements CassandraDaemon.Server
 
         public void closeAll()
         {
+            allConnections.clear();
             allChannels.close().awaitUninterruptibly();
+        }
+        
+        @Override
+        public int getConnectionsCount()
+        {
+            return allConnections.size();
+        }
+
+        @Override
+        public Set<String> listConnections()
+        {
+            Set<String> result = new HashSet<>();
+            for (Connection con: allConnections.values()) {
+                result.add(con.toString());
+            }
+            return result;
+        }
+
+        @Override
+        public void operationComplete(ChannelFuture future) throws Exception
+        {   
+            future.getChannel().getCloseFuture().removeListener(this);
+            allConnections.remove(future.getChannel().getId());
         }
     }
 
@@ -237,7 +287,7 @@ public class Server implements CassandraDaemon.Server
         {
             ChannelPipeline pipeline = Channels.pipeline();
 
-            //pipeline.addLast("debug", new LoggingHandler());
+            // pipeline.addLast("debug", new LoggingHandler());
 
             pipeline.addLast("frameDecoder", new Frame.Decoder(server.connectionFactory));
             pipeline.addLast("frameEncoder", frameEncoder);
@@ -281,7 +331,7 @@ public class Server implements CassandraDaemon.Server
             sslEngine.setUseClientMode(false);
             sslEngine.setEnabledCipherSuites(encryptionOptions.cipher_suites);
             sslEngine.setNeedClientAuth(encryptionOptions.require_client_auth);
-            
+
             SslHandler sslHandler = new SslHandler(sslEngine);
             sslHandler.setIssueHandshake(true);
             ChannelPipeline pipeline = super.getPipeline();
@@ -294,7 +344,8 @@ public class Server implements CassandraDaemon.Server
     {
         private final Server server;
         private static final InetAddress bindAll;
-        static {
+        static
+        {
             try
             {
                 bindAll = InetAddress.getByAddress(new byte[4]);
@@ -330,17 +381,20 @@ public class Server implements CassandraDaemon.Server
 
         public void onJoinCluster(InetAddress endpoint)
         {
-            server.connectionTracker.send(Event.TopologyChange.newNode(getRpcAddress(endpoint), server.socket.getPort()));
+            server.connectionTracker
+                    .send(Event.TopologyChange.newNode(getRpcAddress(endpoint), server.socket.getPort()));
         }
 
         public void onLeaveCluster(InetAddress endpoint)
         {
-            server.connectionTracker.send(Event.TopologyChange.removedNode(getRpcAddress(endpoint), server.socket.getPort()));
+            server.connectionTracker.send(Event.TopologyChange.removedNode(getRpcAddress(endpoint),
+                    server.socket.getPort()));
         }
 
         public void onMove(InetAddress endpoint)
         {
-            server.connectionTracker.send(Event.TopologyChange.movedNode(getRpcAddress(endpoint), server.socket.getPort()));
+            server.connectionTracker.send(Event.TopologyChange.movedNode(getRpcAddress(endpoint),
+                    server.socket.getPort()));
         }
 
         public void onUp(InetAddress endpoint)
@@ -350,7 +404,8 @@ public class Server implements CassandraDaemon.Server
 
         public void onDown(InetAddress endpoint)
         {
-            server.connectionTracker.send(Event.StatusChange.nodeDown(getRpcAddress(endpoint), server.socket.getPort()));
+            server.connectionTracker
+                    .send(Event.StatusChange.nodeDown(getRpcAddress(endpoint), server.socket.getPort()));
         }
 
         public void onCreateKeyspace(String ksName)

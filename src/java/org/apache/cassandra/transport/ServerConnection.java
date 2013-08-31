@@ -125,7 +125,7 @@ public class ServerConnection extends Connection
         return saslAuthenticator;
     }
     
-    public String getJmxDescription()
+    public String toString()
     {
         StringBuilder builder = new StringBuilder();
         builder.append("ServerConnection [clientState=");
