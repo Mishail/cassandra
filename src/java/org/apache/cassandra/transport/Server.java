@@ -18,12 +18,17 @@
 package org.apache.cassandra.transport;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 
@@ -174,8 +179,14 @@ public class Server implements CassandraDaemon.Server
         logger.info("Stop listening for CQL clients");
     }
 
+    public interface ConnectionTrackerMBean
+    {
+        int getConnectionsCount();
+        
+        Set<String> listConnections();
+    }
 
-    public static class ConnectionTracker implements Connection.Tracker
+    public static class ConnectionTracker implements Connection.Tracker, ConnectionTrackerMBean
     {
         public final ChannelGroup allChannels = new DefaultChannelGroup();
         private final EnumMap<Event.Type, ChannelGroup> groups = new EnumMap<Event.Type, ChannelGroup>(Event.Type.class);
@@ -184,6 +195,16 @@ public class Server implements CassandraDaemon.Server
         {
             for (Event.Type type : Event.Type.values())
                 groups.put(type, new DefaultChannelGroup(type.toString()));
+
+            MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+            try
+            {
+                mbs.registerMBean(this, new ObjectName("org.apache.cassandra.transport:type=ConnectionTracker"));
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
         }
 
         public void addConnection(Channel ch, Connection connection)
@@ -210,6 +231,23 @@ public class Server implements CassandraDaemon.Server
         public void closeAll()
         {
             allChannels.close().awaitUninterruptibly();
+        }
+        
+        @Override
+        public int getConnectionsCount()
+        {
+            return allChannels.size() -1 ;
+        }
+
+        @Override
+        public Set<String> listConnections()
+        {
+            Set<String> result = new HashSet<>();
+            for (Channel channel: allChannels) {
+                if (channel.getAttachment() != null)
+                result.add(channel.getAttachment().toString());
+            }
+            return result;
         }
     }
 

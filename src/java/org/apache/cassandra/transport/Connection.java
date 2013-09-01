@@ -21,7 +21,7 @@ import org.jboss.netty.channel.Channel;
 
 public class Connection
 {
-    private final Channel channel;
+    protected final Channel channel;
     private final int version;
     private final Tracker tracker;
 

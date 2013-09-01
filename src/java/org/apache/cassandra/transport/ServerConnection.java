@@ -124,4 +124,18 @@ public class ServerConnection extends Connection
         }
         return saslAuthenticator;
     }
+    
+    @Override
+    public String toString()
+    {
+        StringBuilder builder = new StringBuilder();
+        builder.append("ServerConnection [clientState=");
+        builder.append(clientState);
+        builder.append(", state=");
+        builder.append(state);
+        builder.append(", remote address=");
+        builder.append(channel.getRemoteAddress());
+        builder.append("]");
+        return builder.toString();
+    }
 }
