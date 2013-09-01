@@ -25,7 +25,6 @@ import java.net.UnknownHostException;
 import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.management.MBeanServer;
@@ -50,8 +49,6 @@ import org.apache.cassandra.transport.messages.EventMessage;
 import org.jboss.netty.bootstrap.ServerBootstrap;
 import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.ChannelFactory;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.channel.ChannelFutureListener;
 import org.jboss.netty.channel.ChannelPipeline;
 import org.jboss.netty.channel.ChannelPipelineFactory;
 import org.jboss.netty.channel.Channels;
@@ -189,10 +186,9 @@ public class Server implements CassandraDaemon.Server
         Set<String> listConnections();
     }
 
-    public static class ConnectionTracker implements Connection.Tracker, ConnectionTrackerMBean, ChannelFutureListener
+    public static class ConnectionTracker implements Connection.Tracker, ConnectionTrackerMBean
     {
         public final ChannelGroup allChannels = new DefaultChannelGroup();
-        private final ConcurrentHashMap<Integer, Connection> allConnections = new ConcurrentHashMap<>();
         private final EnumMap<Event.Type, ChannelGroup> groups = new EnumMap<Event.Type, ChannelGroup>(Event.Type.class);
 
         public ConnectionTracker()
@@ -214,10 +210,6 @@ public class Server implements CassandraDaemon.Server
         public void addConnection(Channel ch, Connection connection)
         {
             allChannels.add(ch);
-            Connection added = allConnections.put(ch.getId(), connection);
-            if (added == null) {
-                ch.getCloseFuture().addListener(this);
-            }
         }
 
         public void register(Event.Type type, Channel ch)
@@ -238,31 +230,24 @@ public class Server implements CassandraDaemon.Server
 
         public void closeAll()
         {
-            allConnections.clear();
             allChannels.close().awaitUninterruptibly();
         }
         
         @Override
         public int getConnectionsCount()
         {
-            return allConnections.size();
+            return allChannels.size() -1 ;
         }
 
         @Override
         public Set<String> listConnections()
         {
             Set<String> result = new HashSet<>();
-            for (Connection con: allConnections.values()) {
-                result.add(con.toString());
+            for (Channel channel: allChannels) {
+                if (channel.getAttachment() != null)
+                result.add(channel.getAttachment().toString());
             }
             return result;
-        }
-
-        @Override
-        public void operationComplete(ChannelFuture future) throws Exception
-        {   
-            future.getChannel().getCloseFuture().removeListener(this);
-            allConnections.remove(future.getChannel().getId());
         }
     }
 
