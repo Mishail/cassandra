@@ -18,18 +18,23 @@
 package org.apache.cassandra.transport;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.EnumMap;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 
+import com.google.common.collect.Sets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions;
 import org.apache.cassandra.security.SSLFactory;
@@ -151,7 +156,14 @@ public class Server implements CassandraDaemon.Server
         logger.info("Stop listening for CQL clients");
     }
 
-    public static class ConnectionTracker implements Connection.Tracker
+    public interface ConnectionTrackerMBean
+    {
+        int getNumOfConnectedClients();
+        
+        Set<String> showConnectionDetailsForAllClients();
+    }
+
+    public static class ConnectionTracker implements Connection.Tracker, ConnectionTrackerMBean
     {
         public final ChannelGroup allChannels = new DefaultChannelGroup();
         private final EnumMap<Event.Type, ChannelGroup> groups = new EnumMap<Event.Type, ChannelGroup>(Event.Type.class);
@@ -160,11 +172,22 @@ public class Server implements CassandraDaemon.Server
         {
             for (Event.Type type : Event.Type.values())
                 groups.put(type, new DefaultChannelGroup(type.toString()));
+
+            MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+            try
+            {
+                mbs.registerMBean(this, new ObjectName("org.apache.cassandra.Client:type=NativeSessionManager"));
+            }
+            catch (Exception e)
+            {
+                throw new RuntimeException(e);
+            }
         }
 
         public void addConnection(Channel ch, Connection connection)
         {
             allChannels.add(ch);
+            ch.setAttachment(connection);
         }
 
         public void register(Event.Type type, Channel ch)
@@ -186,6 +209,24 @@ public class Server implements CassandraDaemon.Server
         public void closeAll()
         {
             allChannels.close().awaitUninterruptibly();
+        }
+        
+        @Override
+        public int getNumOfConnectedClients()
+        {
+            return allChannels.size() -1 ; //1 channel is for the bootstrap
+        }
+
+        @Override
+        public Set<String> showConnectionDetailsForAllClients()
+        {
+            Set<String> result = Sets.newHashSet();
+            for (Channel channel: allChannels) {
+                if (channel.getAttachment() != null) {
+                    result.add(channel.getAttachment().toString());
+                }
+            }
+            return result;
         }
     }
 

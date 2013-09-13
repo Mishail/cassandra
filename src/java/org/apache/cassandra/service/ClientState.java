@@ -294,4 +294,20 @@ public class ClientState
             throw new RuntimeException(e);
         }
     }
+
+    @Override
+    public String toString()
+    {
+        StringBuilder builder = new StringBuilder();
+        builder.append("ClientState [user=");
+        builder.append(user);
+        builder.append(", keyspace=");
+        builder.append(keyspace);
+        builder.append(", cqlVersion=");
+        builder.append(cqlVersion);
+        builder.append(", internalCall=");
+        builder.append(internalCall);
+        builder.append("]");
+        return builder.toString();
+    }
 }

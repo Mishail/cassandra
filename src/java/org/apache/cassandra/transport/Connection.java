@@ -22,7 +22,7 @@ import org.jboss.netty.channel.Channel;
 public class Connection
 {
     private volatile FrameCompressor frameCompressor;
-    private volatile Channel channel;
+    protected volatile Channel channel;
     private final Tracker tracker;
 
     public Connection(Tracker tracker)
