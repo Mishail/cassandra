@@ -194,8 +194,10 @@ public final class StreamResultFuture extends AbstractFuture<StreamState>
     void fireStreamEvent(StreamEvent event)
     {
         // delegate to listener
-        for (StreamEventHandler listener : eventListeners)
-            listener.handleStreamEvent(event);
+        synchronized(eventListeners) {
+            for (StreamEventHandler listener : eventListeners)
+                listener.handleStreamEvent(event);
+        }
     }
 
     private synchronized void maybeComplete(StreamSession session)
