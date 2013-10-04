@@ -22,6 +22,7 @@ import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.util.*;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeoutException;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
@@ -30,9 +31,9 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -53,6 +54,7 @@ import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.UnauthorizedException;
 import org.apache.cassandra.io.util.DataOutputBuffer;
 import org.apache.cassandra.locator.DynamicEndpointSnitch;
+import org.apache.cassandra.metrics.ClientMetrics;
 import org.apache.cassandra.scheduler.IRequestScheduler;
 import org.apache.cassandra.service.*;
 import org.apache.cassandra.tracing.Tracing;
@@ -80,6 +82,7 @@ public class CassandraServer implements Cassandra.Iface
     public CassandraServer()
     {
         requestScheduler = DatabaseDescriptor.getRequestScheduler();
+        registerMetrics();
     }
 
     public ThriftClientState state()
@@ -1876,6 +1879,19 @@ public class CassandraServer implements Cassandra.Iface
         }
         return false;
     }
-
+    
+    
+    private void registerMetrics()
+    {
+        ClientMetrics.instance.addCounter("connectedThriftClients", new Callable<Integer>()
+        {
+            
+            @Override
+            public Integer call() throws Exception
+            {
+                return ThriftSessionManager.instance.getNumOfConnectedClients();
+            }
+        });
+    }
     // main method moved to CassandraDaemon
 }

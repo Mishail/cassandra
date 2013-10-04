@@ -22,16 +22,18 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.EnumMap;
+import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.config.EncryptionOptions;
+import org.apache.cassandra.metrics.ClientMetrics;
 import org.apache.cassandra.security.SSLFactory;
 import org.apache.cassandra.service.CassandraDaemon;
 import org.apache.cassandra.service.IEndpointLifecycleSubscriber;
@@ -76,6 +78,7 @@ public class Server implements CassandraDaemon.Server
         EventNotifier notifier = new EventNotifier(this);
         StorageService.instance.register(notifier);
         MigrationManager.instance.register(notifier);
+        registerMetrics();
     }
 
     public Server(String hostname, int port)
@@ -140,6 +143,19 @@ public class Server implements CassandraDaemon.Server
         connectionTracker.allChannels.add(channel);
     }
 
+    private void registerMetrics()
+    {
+        ClientMetrics.instance.addCounter("connectedNativeClients", new Callable<Integer>()
+        {
+            
+            @Override
+            public Integer call() throws Exception
+            {
+                return connectionTracker.getNumOfConnectedClients();
+            }
+        });
+    }
+
     private void close()
     {
         // Close opened connections
@@ -155,7 +171,6 @@ public class Server implements CassandraDaemon.Server
     {
         public final ChannelGroup allChannels = new DefaultChannelGroup();
         private final EnumMap<Event.Type, ChannelGroup> groups = new EnumMap<Event.Type, ChannelGroup>(Event.Type.class);
-
         public ConnectionTracker()
         {
             for (Event.Type type : Event.Type.values())
@@ -186,6 +201,16 @@ public class Server implements CassandraDaemon.Server
         public void closeAll()
         {
             allChannels.close().awaitUninterruptibly();
+        }
+        
+        public int getNumOfConnectedClients() 
+        {
+            /* 
+              - When server is running: allChannels contains all clients' connections (channels) 
+                plus one additional channel used for the server's own bootstrap. 
+               - When server is stopped: the size is 0 
+            */
+            return allChannels.size() != 0 ? allChannels.size() - 1 : 0; 
         }
     }
 
