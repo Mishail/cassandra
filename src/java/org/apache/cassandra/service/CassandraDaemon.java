@@ -158,8 +158,14 @@ public class CassandraDaemon
             logger.debug("Checking directory {}", dataDir);
             File dir = new File(dataDir);
             if (dir.exists())
+            {
                 assert dir.isDirectory() && dir.canRead() && dir.canWrite() && dir.canExecute()
                     : String.format("Directory %s is not accessible.", dataDir);
+            }
+            else 
+            {
+                assert dir.mkdirs() : String.format("Directory %s can't be created.", dataDir);
+            }
         }
 
         if (CacheService.instance == null) // should never happen
