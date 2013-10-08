@@ -893,6 +893,9 @@ public class NodeCmd
                 outs.println("\t\tCompacted partition minimum bytes: " + cfstore.getMinRowSize());
                 outs.println("\t\tCompacted partition maximum bytes: " + cfstore.getMaxRowSize());
                 outs.println("\t\tCompacted partition mean bytes: " + cfstore.getMeanRowSize());
+                outs.println("\t\tLive cells count (last query): " + cfstore.getLiveCellsPerLastRead());
+                outs.println("\t\tTombstones count (last query): " + cfstore.getTombstonesPerLastRead());
+                outs.println("\t\tTombstones ratio (last query): " + String.format("%.3f", cfstore.getPercentageTombstonesPerLastRead()));
 
                 outs.println("");
             }
