@@ -25,6 +25,8 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.yammer.metrics.Metrics;
+
+import org.apache.cassandra.auth.IAuthenticator;
 import org.apache.cassandra.cli.transport.FramedTransportFactory;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.EncryptionOptions;
@@ -33,13 +35,11 @@ import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.SyntaxException;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.commons.cli.*;
-
 import org.apache.cassandra.db.ColumnFamilyType;
 import org.apache.cassandra.stress.util.CassandraClient;
 import org.apache.cassandra.transport.SimpleClient;
 import org.apache.cassandra.thrift.*;
 import org.apache.commons.lang3.StringUtils;
-
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.transport.TSocket;
@@ -116,6 +116,8 @@ public class Session implements Serializable
         availableOptions.addOption("st", SSL_STORE_TYPE,         true, "SSL: type of store");
         availableOptions.addOption("ciphers", SSL_CIPHER_SUITES, true, "SSL: comma-separated list of encryption suites to use");
         availableOptions.addOption("th",  "throttle",            true,   "Throttle the total number of operations per second to a maximum amount.");
+        availableOptions.addOption("un", "username",             true,   "User name for cassandra authentication.");
+        availableOptions.addOption("pw", "password",             true,   "Password for cassandra authentication.");
     }
 
     private int numKeys          = 1000 * 1000;
@@ -132,6 +134,8 @@ public class Session implements Serializable
     private int superColumns     = 1;
     private String compression   = null;
     private String compactionStrategy = null;
+    private String username          = null;
+    private String password      = null;
 
     private int progressInterval  = 10;
     private int keysPerCall       = 1000;
@@ -450,6 +454,16 @@ public class Session implements Serializable
 
             if (cmd.hasOption("tf"))
                 transportFactory = validateAndSetTransportFactory(cmd.getOptionValue("tf"));
+            
+            if (cmd.hasOption("un"))
+            {
+                username = cmd.getOptionValue("un");
+            }
+            
+            if (cmd.hasOption("pw"))
+            {
+                password = cmd.getOptionValue("pw");
+            }
 
         }
         catch (ParseException e)
@@ -753,6 +767,23 @@ public class Session implements Serializable
             {
                 client.set_keyspace("Keyspace1");
             }
+            
+            if (username != null && password != null) 
+            {
+                Map<String, String> credentials = new HashMap<>();
+                credentials.put(IAuthenticator.USERNAME_KEY, username);
+                credentials.put(IAuthenticator.PASSWORD_KEY, password);
+                AuthenticationRequest authenticationRequest = new AuthenticationRequest(credentials);
+                client.login(authenticationRequest);
+            }
+        }
+        catch (AuthenticationException e)
+        {
+            throw new RuntimeException(e.getWhy());
+        }
+        catch (AuthorizationException e)
+        {
+            throw new RuntimeException(e.getWhy());
         }
         catch (InvalidRequestException e)
         {
