@@ -245,7 +245,7 @@ cqlsh_extra_syntax_rules = r'''
                      | "EACH_QUORUM"
                      ;
 
-<showCommand> ::= "SHOW" what=( "VERSION" | "HOST" )
+<showCommand> ::= "SHOW" what=( "VERSION" | "HOST" | "SESSION" sessionid=<uuid> )
                 ;
 
 <sourceCommand> ::= "SOURCE" fname=<stringLiteral>
@@ -568,6 +568,9 @@ class Shell(cmd.Cmd):
         # set_cql_version.
         vers['cql'] = self.cql_version
         print "[cqlsh %(shver)s | Cassandra %(build)s | CQL spec %(cql)s | Thrift protocol %(thrift)s]" % vers
+
+    def show_session(self, sessionid):
+        print_trace_session(self, self.cursor, sessionid)
 
     def get_connection_versions(self):
         self.cursor.execute("select * from system.local where key = 'local'")
@@ -1561,6 +1564,9 @@ class Shell(cmd.Cmd):
             self.show_version()
         elif showwhat == 'host':
             self.show_host()
+        elif showwhat.startswith('session'):
+            session_id = parsed.get_binding('sessionid').lower()
+            self.show_session(session_id)
         else:
             self.printerr('Wait, how do I show %r?' % (showwhat,))
 
