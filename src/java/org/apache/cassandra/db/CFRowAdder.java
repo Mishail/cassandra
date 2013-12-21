@@ -17,11 +17,14 @@
  */
 package org.apache.cassandra.db;
 
+import java.nio.ByteBuffer;
+
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.marshal.AbstractType;
+import org.apache.cassandra.db.marshal.CollectionType;
 import org.apache.cassandra.db.marshal.MapType;
 import org.apache.cassandra.utils.ByteBufferUtil;
 
@@ -72,10 +75,14 @@ public class CFRowAdder
 
     private CFRowAdder add(CellName name, ColumnDefinition def, Object value)
     {
-        if (value == null)
+		if (value == null)
             cf.addColumn(new DeletedCell(name, ldt, timestamp));
         else
-            cf.addColumn(new Cell(name, ((AbstractType)def.type).decompose(value), timestamp));
+        {
+            AbstractType valueType = def.type.isCollection() ? ((CollectionType) def.type).valueComparator()
+                    : ((AbstractType) def.type);
+            cf.addColumn(new Cell(name, valueType.decompose(value), timestamp));
+        }
         return this;
     }
 }
