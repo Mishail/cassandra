@@ -230,7 +230,8 @@ cqlsh_extra_syntax_rules = r'''
                                   | ( "COLUMNFAMILY" | "TABLE" ) cf=<columnFamilyName>
                                   | ( "COLUMNFAMILIES" | "TABLES" )
                                   | "FULL"? "SCHEMA"
-                                  | "CLUSTER" )
+                                  | "CLUSTER"
+                                  | "TYPES")
                     ;
 
 <consistencyCommand> ::= "CONSISTENCY" ( level=<consistencyLevel> )?
@@ -625,6 +626,16 @@ class Shell(cmd.Cmd):
             ksname = self.current_keyspace
         layout = self.get_columnfamily_layout(ksname, cfname)
         return [col.name for col in layout.columns]
+
+    def get_usertype_names(self, ksname=None):
+        if ksname is None:
+            ksname = self.current_keyspace
+        cf_q = """select type_name from system.schema_usertypes
+                   where keyspace_name=:ks"""
+        self.cursor.execute(cf_q,
+                            {'ks': self.cql_unprotect_name(ksname)},
+                            consistency_level='ONE')
+        return [str(row[0]) for row in self.cursor.fetchall()]
 
     # ===== thrift-dependent parts =====
 
@@ -1238,6 +1249,19 @@ class Shell(cmd.Cmd):
             cmd.Cmd.columnize(self, self.get_columnfamily_names(ksname))
             print
 
+    def describe_usertypes(self, ksname):
+        print
+        if ksname is None:
+            for k in self.get_keyspaces():
+                name = self.cql_protect_name(k.name)
+                print 'Keyspace %s' % (name,)
+                print '---------%s' % ('-' * len(name))
+                cmd.Cmd.columnize(self, self.get_usertype_names(k.name))
+                print
+        else:
+            cmd.Cmd.columnize(self, self.get_usertype_names(ksname))
+            print
+
     def describe_cluster(self):
         print '\nCluster: %s' % self.get_cluster_name()
         p = trim_if_present(self.get_partitioner(), 'org.apache.cassandra.dht.')
@@ -1323,6 +1347,8 @@ class Shell(cmd.Cmd):
             self.describe_columnfamily(ks, cf)
         elif what in ('columnfamilies', 'tables'):
             self.describe_columnfamilies(self.current_keyspace)
+        elif what == 'types':
+            self.describe_usertypes(self.current_keyspace)
         elif what == 'cluster':
             self.describe_cluster()
         elif what == 'schema':
