@@ -231,7 +231,8 @@ cqlsh_extra_syntax_rules = r'''
                                   | ( "COLUMNFAMILIES" | "TABLES" )
                                   | "FULL"? "SCHEMA"
                                   | "CLUSTER"
-                                  | "TYPES")
+                                  | "TYPES"
+                                  | "TYPE" ut=<userTypeName>)
                     ;
 
 <consistencyCommand> ::= "CONSISTENCY" ( level=<consistencyLevel> )?
@@ -365,6 +366,9 @@ class ColumnFamilyNotFound(Exception):
     pass
 
 class VersionNotSupported(Exception):
+    pass
+
+class UserTypeNotFound(Exception):
     pass
 
 class DecodeError(Exception):
@@ -630,9 +634,9 @@ class Shell(cmd.Cmd):
     def get_usertype_names(self, ksname=None):
         if ksname is None:
             ksname = self.current_keyspace
-        cf_q = """select type_name from system.schema_usertypes
+        ut_q = """select type_name from system.schema_usertypes
                    where keyspace_name=:ks"""
-        self.cursor.execute(cf_q,
+        self.cursor.execute(ut_q,
                             {'ks': self.cql_unprotect_name(ksname)},
                             consistency_level='ONE')
         return [str(row[0]) for row in self.cursor.fetchall()]
@@ -703,6 +707,20 @@ class Shell(cmd.Cmd):
                             consistency_level='ONE')
         cols = self.fetchdict_all()
         return cql3handling.CqlTableDef.from_layout(layout, cols)
+
+    def get_usertype_layout(self, ksname, typename):
+        if ksname is None:
+            ksname = self.current_keyspace
+        ut_q = """select * from system.schema_usertypes
+                   where keyspace_name=:ks and type_name=:ut"""
+        self.cursor.execute(ut_q,
+                            {'ks': ksname, 'ut': typename},
+                            consistency_level='ONE')
+        layout = self.fetchdict()
+
+        if not layout:
+            raise UserTypeNotFound("User type %r not found" % typename)
+        return zip(layout[u'column_names'], map(lookup_casstype, layout[u'column_types']))
 
     # ===== end cql3-dependent parts =====
 
@@ -1093,6 +1111,13 @@ class Shell(cmd.Cmd):
             out.write(" AND durable_writes = 'false'")
         out.write(';\n')
 
+        uts = self.get_usertype_names(ksname)
+        if uts:
+            out.write('\nUSE %s;\n' % ksname)
+            for ut in uts:
+                out.write('\n')
+                self.print_recreate_usertype(ksdef.name, ut, out)
+
         cfs = self.get_columnfamily_names(ksname)
         if cfs:
             out.write('\nUSE %s;\n' % ksname)
@@ -1100,6 +1125,16 @@ class Shell(cmd.Cmd):
                 out.write('\n')
                 # yes, cf might be looked up again. oh well.
                 self.print_recreate_columnfamily(ksdef.name, cf, out)
+
+    def print_recreate_usertype(self, ksname, utname, out):
+        layout = self.get_usertype_layout(ksname, utname)
+        out.write("CREATE TYPE %s (\n" % utname)
+        for (index,(tname,ttype)) in enumerate(layout, 1):
+            out.write("  %s %s" % (tname, ttype.cql_parameterized_type()))
+            if index < len(layout):
+                out.write(",\n")
+            else:
+                out.write("\n); \n")
 
     def print_recreate_columnfamily(self, ksname, cfname, out):
         """
@@ -1262,6 +1297,13 @@ class Shell(cmd.Cmd):
             cmd.Cmd.columnize(self, self.get_usertype_names(ksname))
             print
 
+    def describe_usertype(self, ksname, typename):
+        if ksname is None:
+            ksname = self.current_keyspace
+        print
+        self.print_recreate_usertype(ksname, typename, sys.stdout)
+        print
+
     def describe_cluster(self):
         print '\nCluster: %s' % self.get_cluster_name()
         p = trim_if_present(self.get_partitioner(), 'org.apache.cassandra.dht.')
@@ -1349,6 +1391,10 @@ class Shell(cmd.Cmd):
             self.describe_columnfamilies(self.current_keyspace)
         elif what == 'types':
             self.describe_usertypes(self.current_keyspace)
+        elif what == 'type':
+            ks = self.cql_unprotect_name(parsed.get_binding('ksname', None))
+            ut = self.cql_unprotect_name(parsed.get_binding('utname'))
+            self.describe_usertype(ks, ut)
         elif what == 'cluster':
             self.describe_cluster()
         elif what == 'schema':
