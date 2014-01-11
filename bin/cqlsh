@@ -1126,11 +1126,18 @@ class Shell(cmd.Cmd):
                 # yes, cf might be looked up again. oh well.
                 self.print_recreate_columnfamily(ksdef.name, cf, out)
 
+    def get_printable_type(self, coltype):
+        if coltype.cassname.endswith("UserType"):
+            return coltype.subtypes[1].cassname.decode("hex")
+        if issubclass(coltype, ReversedType):
+            coltype = coltype.subtypes[0]
+        return coltype.cql_parameterized_type()
+
     def print_recreate_usertype(self, ksname, utname, out):
         layout = self.get_usertype_layout(ksname, utname)
         out.write("CREATE TYPE %s (\n" % utname)
         for (index,(tname,ttype)) in enumerate(layout, 1):
-            out.write("  %s %s" % (tname, ttype.cql_parameterized_type()))
+            out.write("  %s %s" % (tname, self.get_printable_type(ttype)))
             if index < len(layout):
                 out.write(",\n")
             else:
@@ -1149,13 +1156,7 @@ class Shell(cmd.Cmd):
 
         for col in layout.columns:
             colname = self.cql_protect_name(col.name)
-            coltype = col.cqltype
-
-            # Reversed types only matter for clustering order, not column definitions
-            if issubclass(coltype, ReversedType):
-                coltype = coltype.subtypes[0]
-
-            out.write("  %s %s,\n" % (colname, coltype.cql_parameterized_type()))
+            out.write("  %s %s,\n" % (colname, self.get_printable_type(col.cqltype)))
 
         out.write("  PRIMARY KEY (")
         partkeynames = self.cql_protect_names(layout.partition_key_columns)
