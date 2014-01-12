@@ -266,11 +266,13 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 # timestamp is included here, since it's also a keyword
 <simpleStorageType> ::= typename=( <identifier> | <stringLiteral> | <K_TIMESTAMP> ) ;
 
-<storageType> ::= <simpleStorageType> | <collectionType> ;
+<userType> ::= utname=<cfOrKsName> ;
 
-<collectionType> ::= "map" "<" <simpleStorageType> "," <simpleStorageType> ">"
-                   | "list" "<" <simpleStorageType> ">"
-                   | "set" "<" <simpleStorageType> ">"
+<storageType> ::= <simpleStorageType> | <collectionType> | <userType> ;
+
+<collectionType> ::= "map" "<" <simpleStorageType> "," ( <simpleStorageType> | <userType> ) ">"
+                   | "list" "<" ( <simpleStorageType> | <userType> ) ">"
+                   | "set" "<" ( <simpleStorageType> | <userType> ) ">"
                    ;
 
 <columnFamilyName> ::= ( ksname=<cfOrKsName> dot="." )? cfname=<cfOrKsName> ;
@@ -540,7 +542,6 @@ completer_for('userTypeName', 'ksname')(cf_ks_name_completer)
 
 completer_for('userTypeName', 'dot')(cf_ks_dot_completer)
 
-@completer_for('userTypeName', 'utname')
 def ut_name_completer(ctxt, cass):
     ks = ctxt.get_binding('ksname', None)
     if ks is not None:
@@ -552,6 +553,10 @@ def ut_name_completer(ctxt, cass):
             return ()
         raise
     return map(maybe_escape_name, utnames)
+
+
+completer_for('userTypeName', 'utname')(ut_name_completer)
+completer_for('userType', 'utname')(ut_name_completer)
 
 @completer_for('unreservedKeyword', 'nocomplete')
 def unreserved_keyword_completer(ctxt, cass):
