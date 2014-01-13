@@ -112,7 +112,7 @@ cqlshlibdir = os.path.join(CASSANDRA_PATH, 'pylib')
 if os.path.isdir(cqlshlibdir):
     sys.path.insert(0, cqlshlibdir)
 
-from cqlshlib import cqlhandling, cql3handling, pylexotron
+from cqlshlib import cqlhandling, cql3handling, pylexotron, usertypes
 from cqlshlib.displaying import (RED, BLUE, ANSI_RESET, COLUMN_NAME_COLORS,
                                  FormattedValue, colorme)
 from cqlshlib.formatting import format_by_type
@@ -1127,20 +1127,11 @@ class Shell(cmd.Cmd):
                 # yes, cf might be looked up again. oh well.
                 self.print_recreate_columnfamily(ksdef.name, cf, out)
 
-    def get_printable_type(self, coltype):
-        if coltype.cassname.endswith("UserType"):
-            return coltype.subtypes[1].cassname.decode("hex")
-        if issubclass(coltype, ReversedType):
-            return coltype.subtypes[0].cql_parameterized_type()
-        if coltype.subtypes:
-            return '%s<%s>' % (coltype.typename, ', '.join(self.get_printable_type(styp) for styp in coltype.subtypes))
-        return coltype.cql_parameterized_type()
-
     def print_recreate_usertype(self, ksname, utname, out):
         layout = self.get_usertype_layout(ksname, utname)
         out.write("CREATE TYPE %s (\n" % utname)
         for (index,(tname,ttype)) in enumerate(layout, 1):
-            out.write("  %s %s" % (tname, self.get_printable_type(ttype)))
+            out.write("  %s %s" % (tname, ttype.cql_parameterized_type()))
             if index < len(layout):
                 out.write(",\n")
             else:
@@ -1155,11 +1146,18 @@ class Shell(cmd.Cmd):
         """
         layout = self.get_columnfamily_layout(ksname, cfname)
         cfname = self.cql_protect_name(layout.name)
+
         out.write("CREATE TABLE %s (\n" % cfname)
 
         for col in layout.columns:
             colname = self.cql_protect_name(col.name)
-            out.write("  %s %s,\n" % (colname, self.get_printable_type(col.cqltype)))
+            coltype = col.cqltype
+
+            # Reversed types only matter for clustering order, not column definitions
+            if issubclass(coltype, ReversedType):
+                coltype = coltype.subtypes[0]
+
+            out.write("  %s %s,\n" % (colname, coltype.cql_parameterized_type()))
 
         out.write("  PRIMARY KEY (")
         partkeynames = self.cql_protect_names(layout.partition_key_columns)
@@ -2076,6 +2074,8 @@ def main(options, hostname, port):
     setup_cqlruleset(options.cqlmodule)
     setup_cqldocs(options.cqlmodule)
     init_history()
+
+    CassandraType.cql_parameterized_type = classmethod(usertypes.cql_parameterized_type)
 
     if options.file is None:
         stdin = None
