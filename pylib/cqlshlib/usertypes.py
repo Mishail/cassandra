@@ -14,16 +14,67 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from cql.marshal import uint16_unpack
+
+class AbstractUserType(object):
+    def __repr__(self):
+        return self.__dict__.__repr__()
+
+
+def _is_usertype(cls):
+    return cls.cassname.endswith("UserType")
+
+
+def _decode_ut_name(cls):
+    return cls.subtypes[1].cassname.decode("hex")
+
+#/cql.cqltypes._CassandraType#cql_parameterized_type
 def cql_parameterized_type(cls):
     """
     Return a CQL type specifier for this type. If this type has parameters,
     they are included in standard CQL <> notation.
     """
-    if cls.cassname.endswith("UserType"):
-        return cls.subtypes[1].cassname.decode("hex")
+    if _is_usertype(cls):
+        return _decode_ut_name(cls)
 
     if not cls.subtypes:
         return cls.typename
     return '%s<%s>' % (cls.typename, ', '.join(styp.cql_parameterized_type() for styp in cls.subtypes))
+
+
+def _deserialize(ut_dict, cls, byts):
+    ksname = cls.subtypes[0].cassname
+    utname = _decode_ut_name(cls)
+    ks_dict = ut_dict.get(ksname, dict())
+    types_list = ks_dict.get(utname, dict())
+    if not types_list:
+        return None
+
+    p = 0
+    result = []
+    for col_name, col_type in types_list:
+        itemlen = uint16_unpack(byts[p:p+2])
+        p += 2
+        item = byts[p:p+itemlen]
+        p += itemlen
+        result.append((col_name, col_type.from_binary(item)))
+        p += 1
+
+    return result
+
+#cql.cqltypes._CassandraType#from_binary
+def from_binary(ut_dict, cls, byts):
+    """
+    Deserialize a bytestring into a value. See the deserialize() method
+    for more information. This method differs in that if None or the empty
+    string is passed in, None may be returned.
+    """
+    if byts is None:
+        return None
+    if byts == '' and not cls.empty_binary_ok:
+        return None
+    if _is_usertype(cls):
+        return _deserialize(ut_dict, cls, byts)
+    return cls.deserialize(byts)
 
 

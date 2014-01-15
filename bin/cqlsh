@@ -519,6 +519,12 @@ class Shell(cmd.Cmd):
             self.show_line_nums = True
         self.stdin = stdin
         self.query_out = sys.stdout
+        self._setup_usertypes()
+
+    def _setup_usertypes(self):
+        from functools import partial
+        CassandraType.cql_parameterized_type = classmethod(usertypes.cql_parameterized_type)
+        CassandraType.from_binary = classmethod(partial(usertypes.from_binary, self.get_usertypes_dict()))
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
@@ -721,6 +727,24 @@ class Shell(cmd.Cmd):
         if not layout:
             raise UserTypeNotFound("User type %r not found" % typename)
         return zip(layout[u'column_names'], map(lookup_casstype, layout[u'column_types']))
+
+    def get_usertypes_dict(self):
+        ut_q = """select * from system.schema_usertypes"""
+        self.cursor.execute(ut_q, consistency_level='ONE')
+        data = self.fetchdict_all()
+        if not data:
+            return None
+
+        result = {}
+        for row in data:
+            ksname = row[u'keyspace_name']
+            if ksname not in result:
+                result[ksname] = {}
+            utname = row[u'type_name']
+
+            result[ksname][utname] = zip(row[u'column_names'], map(lookup_casstype, row[u'column_types']))
+
+        return result
 
     # ===== end cql3-dependent parts =====
 
@@ -2074,8 +2098,6 @@ def main(options, hostname, port):
     setup_cqlruleset(options.cqlmodule)
     setup_cqldocs(options.cqlmodule)
     init_history()
-
-    CassandraType.cql_parameterized_type = classmethod(usertypes.cql_parameterized_type)
 
     if options.file is None:
         stdin = None
