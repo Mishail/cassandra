@@ -252,7 +252,7 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
                           | <dropUserTypeStatement>
                           | <alterTableStatement>
                           | <alterKeyspaceStatement>
-                         # | <alterUserTypeStatement>
+                          | <alterUserTypeStatement>
                           ;
 
 <authenticationStatement> ::= <createUserStatement>
@@ -574,6 +574,13 @@ def get_cf_layout(ctxt, cass):
         ks = dequote_name(ks)
     cf = dequote_name(ctxt.get_binding('cfname'))
     return cass.get_columnfamily_layout(ks, cf)
+
+def get_ut_layout(ctxt, cass):
+    ks = ctxt.get_binding('ksname', None)
+    if ks is not None:
+        ks = dequote_name(ks)
+    ut = dequote_name(ctxt.get_binding('utname'))
+    return cass.get_usertype_layout(ks, ut)
 
 def working_on_keyspace(ctxt):
     wat = ctxt.get_binding('wat').upper()
@@ -968,6 +975,7 @@ syntax_rules += r'''
 
 explain_completion('createIndexStatement', 'indexname', '<new_index_name>')
 explain_completion('createUserTypeStatement', 'typename', '<new_type_name>')
+explain_completion('createUserTypeStatement', 'newcol', '<new_field_name>')
 
 @completer_for('createIndexStatement', 'col')
 def create_index_col_completer(ctxt, cass):
@@ -1005,6 +1013,15 @@ syntax_rules += r'''
                       | "RENAME" existcol=<cident> "TO" newcol=<cident>
                          ( "AND" existcol=<cident> "TO" newcol=<cident> )*
                       ;
+
+<alterUserTypeStatement> ::= "ALTER" "TYPE" ut=<userTypeName>
+                               <alterTypeInstructions>
+                             ;
+<alterTypeInstructions> ::= "RENAME" "TO" typename=<cfOrKsName>
+                           | "ALTER" existcol=<cident> "TYPE" <storageType>
+                           | "ADD" newcol=<cident> <storageType>
+                           | "RENAME" existcol=<cident> "TO" newcol=<cident>
+                           ;
 '''
 
 @completer_for('alterInstructions', 'existcol')
@@ -1013,7 +1030,16 @@ def alter_table_col_completer(ctxt, cass):
     cols = [md.name for md in layout.columns]
     return map(maybe_escape_name, cols)
 
+@completer_for('alterTypeInstructions', 'existcol')
+def alter_type_field_completer(ctxt, cass):
+    layout = get_ut_layout(ctxt, cass)
+    fields = [tuple[0] for tuple in layout]
+    return map(maybe_escape_name, fields)
+
 explain_completion('alterInstructions', 'newcol', '<new_column_name>')
+explain_completion('alterTypeInstructions', 'typename', '<new_type_name>')
+explain_completion('alterTypeInstructions', 'newcol', '<new_field_name>')
+
 
 syntax_rules += r'''
 <alterKeyspaceStatement> ::= "ALTER" ( "KEYSPACE" | "SCHEMA" ) ks=<alterableKeyspaceName>
