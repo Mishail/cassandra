@@ -245,11 +245,14 @@ JUNK ::= /([ \t\r\f\v]+|(--|[/][/])[^\n\r]*([\n\r]|$)|[/][*].*?[*][/])/ ;
 <schemaChangeStatement> ::= <createKeyspaceStatement>
                           | <createColumnFamilyStatement>
                           | <createIndexStatement>
+                          | <createUserTypeStatement>
                           | <dropKeyspaceStatement>
                           | <dropColumnFamilyStatement>
                           | <dropIndexStatement>
+                          | <dropUserTypeStatement>
                           | <alterTableStatement>
                           | <alterKeyspaceStatement>
+                         # | <alterUserTypeStatement>
                           ;
 
 <authenticationStatement> ::= <createUserStatement>
@@ -956,9 +959,15 @@ syntax_rules += r'''
                                cf=<columnFamilyName> "(" col=<cident> ")"
                                ( "USING" <stringLiteral> ( "WITH" "OPTIONS" "=" <mapLiteral> )? )?
                          ;
+
+<createUserTypeStatement> ::= "CREATE" "TYPE" ( ks=<nonSystemKeyspaceName> dot="." )? typename=<cfOrKsName> "(" newcol=<cident> <storageType>
+                                ( "," [newcolname]=<cident> <storageType> )*
+                            ")"
+                         ;
 '''
 
 explain_completion('createIndexStatement', 'indexname', '<new_index_name>')
+explain_completion('createUserTypeStatement', 'typename', '<new_type_name>')
 
 @completer_for('createIndexStatement', 'col')
 def create_index_col_completer(ctxt, cass):
@@ -975,6 +984,10 @@ syntax_rules += r'''
 
 <dropIndexStatement> ::= "DROP" "INDEX" ("IF" "EXISTS")? indexname=<identifier>
                        ;
+
+<dropUserTypeStatement> ::= "DROP" "TYPE" ut=<userTypeName>
+                              ;
+
 '''
 
 @completer_for('dropIndexStatement', 'indexname')
