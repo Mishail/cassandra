@@ -53,6 +53,8 @@ def _deserialize(ut_dict, cls, byts):
     p = 0
     result = []
     for col_name, col_type in types_list:
+        if p == len(byts):
+            break
         itemlen = uint16_unpack(byts[p:p+2])
         p += 2
         item = byts[p:p+itemlen]
