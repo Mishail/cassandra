@@ -22,6 +22,7 @@ from collections import defaultdict
 from . import wcwidth
 from .displaying import colorme, FormattedValue, DEFAULT_VALUE_COLORS
 from cql import cqltypes
+from usertypes import USER_TYPE
 
 unicode_controlchars_re = re.compile(r'[\x00-\x31\x7f-\xa0]')
 controlchars_re = re.compile(r'[\x00-\x31\x7f-\xff]')
@@ -239,14 +240,15 @@ def format_value_map(val, encoding, colormap, time_format, float_precision, subt
     displaywidth = 4 * len(subs) + sum(k.displaywidth + v.displaywidth for (k, v) in subs)
     return FormattedValue(bval, coloredval, displaywidth)
 
-@formatter_for('\'org.apache.cassandra.db.marshal.UserType\'')
+@formatter_for(USER_TYPE)
 def format_value_utype(val, encoding, colormap, time_format, float_precision, subtypes, nullval, **_):
     def format_field_value(v, subtype):
         return format_value(subtype, v, encoding=encoding, colormap=colormap,
                             time_format=time_format, float_precision=float_precision,
                             nullval=nullval, quote=True)
+
     def format_field_name(name):
-        return format_value_text(name, encoding=encoding, colormap=colormap, quote=True)
+        return format_value_text(name, encoding=encoding, colormap=colormap, quote=False)
 
     subtypes = subtypes[2:]
     subs = [(format_field_name(k), format_field_value(v, subtypes[index])) for (index, (k, v)) in enumerate(val)]
@@ -254,7 +256,7 @@ def format_value_utype(val, encoding, colormap, time_format, float_precision, su
     lb, comma, colon, rb = [colormap['collection'] + s + colormap['reset']
                             for s in ('{', ', ', ': ', '}')]
     coloredval = lb \
-               + comma.join(k.coloredval + colon + v.coloredval for (k, v) in subs) \
-               + rb
+                 + comma.join(k.coloredval + colon + v.coloredval for (k, v) in subs) \
+                 + rb
     displaywidth = 4 * len(subs) + sum(k.displaywidth + v.displaywidth for (k, v) in subs)
     return FormattedValue(bval, coloredval, displaywidth)
