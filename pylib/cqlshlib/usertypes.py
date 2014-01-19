@@ -40,10 +40,10 @@ def cql_parameterized_type(cls):
     return '%s<%s>' % (cls.typename, ', '.join(styp.cql_parameterized_type() for styp in cls.subtypes))
 
 
-def _deserialize(ut_dict, cls, byts):
+def _deserialize(ut_dict_func, cls, byts):
     ksname = cls.subtypes[0].cassname
     utname = _decode_ut_name(cls)
-    ks_dict = ut_dict.get(ksname, {})
+    ks_dict = ut_dict_func().get(ksname, {})
     types_list = ks_dict.get(utname, [])
     if not types_list:
         return None
@@ -63,7 +63,7 @@ def _deserialize(ut_dict, cls, byts):
     return result
 
 #cql.cqltypes._CassandraType#from_binary
-def from_binary(ut_dict, cls, byts):
+def from_binary(ut_dict_func, cls, byts):
     """
     Deserialize a bytestring into a value. See the deserialize() method
     for more information. This method differs in that if None or the empty
@@ -74,7 +74,7 @@ def from_binary(ut_dict, cls, byts):
     if byts == '' and not cls.empty_binary_ok:
         return None
     if _is_usertype(cls):
-        return _deserialize(ut_dict, cls, byts)
+        return _deserialize(ut_dict_func, cls, byts)
     return cls.deserialize(byts)
 
 

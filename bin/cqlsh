@@ -32,7 +32,7 @@ exit 1
 from __future__ import with_statement
 
 description = "CQL Shell for Apache Cassandra"
-version = "4.1.1"
+version = "4.1.2"
 
 from StringIO import StringIO
 from itertools import groupby
@@ -460,6 +460,7 @@ class Shell(cmd.Cmd):
     shunted_query_out = None
     csv_dialect_defaults = dict(delimiter=',', doublequote=False,
                                 escapechar='\\', quotechar='"')
+    _utypes_dict = {}
 
     def __init__(self, hostname, port, transport_factory, color=False,
                  username=None, password=None, encoding=None, stdin=None, tty=True,
@@ -521,10 +522,14 @@ class Shell(cmd.Cmd):
         self.query_out = sys.stdout
         self._setup_usertypes()
 
+    def _get_ut_dict(self):
+        return self._utypes_dict
+
     def _setup_usertypes(self):
+        self._refresh_utype_dict()
         from functools import partial
         CassandraType.cql_parameterized_type = classmethod(usertypes.cql_parameterized_type)
-        CassandraType.from_binary = classmethod(partial(usertypes.from_binary, self.get_usertypes_dict()))
+        CassandraType.from_binary = classmethod(partial(usertypes.from_binary, self._get_ut_dict))
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
@@ -717,18 +722,15 @@ class Shell(cmd.Cmd):
     def get_usertype_layout(self, ksname, typename):
         if ksname is None:
             ksname = self.current_keyspace
-        ut_q = """select * from system.schema_usertypes
-                   where keyspace_name=:ks and type_name=:ut"""
-        self.cursor.execute(ut_q,
-                            {'ks': ksname, 'ut': typename},
-                            consistency_level='ONE')
-        layout = self.fetchdict()
+        ut_dict = self._get_usertypes_dict()
+        ks_dict = ut_dict.get(ksname, {})
+        layout = ks_dict.get(typename, [])
 
         if not layout:
             raise UserTypeNotFound("User type %r not found" % typename)
-        return zip(layout[u'column_names'], map(lookup_casstype, layout[u'column_types']))
+        return layout
 
-    def get_usertypes_dict(self):
+    def _get_usertypes_dict(self):
         ut_q = """select * from system.schema_usertypes"""
         self.cursor.execute(ut_q, consistency_level='ONE')
         data = self.fetchdict_all()
@@ -808,6 +810,9 @@ class Shell(cmd.Cmd):
                 return
             yield newline
 
+    def _refresh_utype_dict(self):
+        self._utypes_dict = self._get_usertypes_dict()
+
     def cmdloop(self):
         """
         Adapted from cmd.Cmd's version, because there is literally no way with
@@ -821,6 +826,7 @@ class Shell(cmd.Cmd):
                     self.statement.write(line)
                     if self.onecmd(self.statement.getvalue()):
                         self.reset_statement()
+                        self._refresh_utype_dict()
                 except EOFError:
                     self.handle_eof()
                 except cql.Error, cqlerr:
