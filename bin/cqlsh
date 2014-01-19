@@ -522,14 +522,13 @@ class Shell(cmd.Cmd):
         self.query_out = sys.stdout
         self._setup_usertypes()
 
-    def _get_ut_dict(self):
-        return self._utypes_dict
-
     def _setup_usertypes(self):
         self._refresh_utype_dict()
         from functools import partial
+        #Properly return type information for user types
         CassandraType.cql_parameterized_type = classmethod(usertypes.cql_parameterized_type)
-        CassandraType.from_binary = classmethod(partial(usertypes.from_binary, self._get_ut_dict))
+        #Deserialize user type values using internal ut_dict dictionary
+        CassandraType.from_binary = classmethod(partial(usertypes.from_binary, lambda: self._utypes_dict))
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
@@ -645,12 +644,19 @@ class Shell(cmd.Cmd):
     def get_usertype_names(self, ksname=None):
         if ksname is None:
             ksname = self.current_keyspace
-        ut_q = """select type_name from system.schema_usertypes
-                   where keyspace_name=:ks"""
-        self.cursor.execute(ut_q,
-                            {'ks': self.cql_unprotect_name(ksname)},
-                            consistency_level='ONE')
-        return [str(row[0]) for row in self.cursor.fetchall()]
+
+        ut_names_dict = self._utypes_dict.get(ksname, {})
+        return [str(ut_name) for ut_name in ut_names_dict.keys()]
+
+    def get_usertype_layout(self, ksname, typename):
+        if ksname is None:
+            ksname = self.current_keyspace
+        ks_dict = self._utypes_dict.get(ksname, {})
+        layout = ks_dict.get(typename, [])
+
+        if not layout:
+            raise UserTypeNotFound("User type %r not found" % typename)
+        return layout
 
     # ===== thrift-dependent parts =====
 
@@ -718,17 +724,6 @@ class Shell(cmd.Cmd):
                             consistency_level='ONE')
         cols = self.fetchdict_all()
         return cql3handling.CqlTableDef.from_layout(layout, cols)
-
-    def get_usertype_layout(self, ksname, typename):
-        if ksname is None:
-            ksname = self.current_keyspace
-        ut_dict = self._get_usertypes_dict()
-        ks_dict = ut_dict.get(ksname, {})
-        layout = ks_dict.get(typename, [])
-
-        if not layout:
-            raise UserTypeNotFound("User type %r not found" % typename)
-        return layout
 
     def _get_usertypes_dict(self):
         ut_q = """select * from system.schema_usertypes"""
@@ -825,8 +820,8 @@ class Shell(cmd.Cmd):
                     line = self.get_input_line(self.prompt)
                     self.statement.write(line)
                     if self.onecmd(self.statement.getvalue()):
-                        self.reset_statement()
                         self._refresh_utype_dict()
+                        self.reset_statement()
                 except EOFError:
                     self.handle_eof()
                 except cql.Error, cqlerr:
