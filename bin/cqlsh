@@ -806,7 +806,13 @@ class Shell(cmd.Cmd):
             yield newline
 
     def _refresh_utype_dict(self):
-        self._utypes_dict = self._get_usertypes_dict()
+        try:
+            self._utypes_dict = self._get_usertypes_dict()
+        except Exception, e:
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+
 
     def cmdloop(self):
         """
