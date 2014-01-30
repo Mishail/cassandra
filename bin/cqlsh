@@ -1057,7 +1057,7 @@ class Shell(cmd.Cmd):
         if cfs:
             for cf in cfs:
                 out.write('\n')
-                self.print_recreate_columnfamily(ksdef.name, cf, out)
+                self.print_recreate_columnfamily(ksname, cf, out)
 
     def print_recreate_columnfamily(self, ksname, cfname, out):
         """
@@ -1066,8 +1066,8 @@ class Shell(cmd.Cmd):
 
         Writes output to the given out stream.
         """
-        out.write(self.conn.metadata.keyspaces[ksname].tables[cfname].as_cql_query())
-        out.write(";\n")
+        out.write(self.conn.metadata.keyspaces[ksname].tables[cfname].export_as_string())
+        out.write(";")
 
     def describe_keyspaces(self):
         print
