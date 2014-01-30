@@ -591,15 +591,15 @@ class Shell(cmd.Cmd):
         return dicts
 
     def get_keyspace_names(self):
-        return [k.name for k in self.get_keyspaces()]
+        return self.conn.metadata.keyspaces.keys()
 
     def get_columnfamily_names(self, ksname=None):
         if ksname is None:
             ksname = self.current_keyspace
         cf_q = """select columnfamily_name from system.schema_columnfamilies
-                   where keyspace_name=:ks"""
+                   where keyspace_name=%s""" % (self.cql_unprotect_name(ksname),)
 
-        return [str(row[0]) for row in self.session.execute(cf_q, {'%(ks)s': self.cql_unprotect_name(ksname)})]
+        return [str(row[0]) for row in self.session.execute(cf_q)]
 
     def get_index_names(self, ksname=None):
         idxnames = []
@@ -1053,12 +1053,10 @@ class Shell(cmd.Cmd):
         ksname = self.cql_protect_name(ksdef.name)
         out.write(ksdef.as_cql_query())
 
-        cfs = self.get_columnfamily_names(ksname)
+        cfs = ksdef.tables.keys()
         if cfs:
-            out.write('\nUSE %s;\n' % ksname)
             for cf in cfs:
                 out.write('\n')
-                # yes, cf might be looked up again. oh well.
                 self.print_recreate_columnfamily(ksdef.name, cf, out)
 
     def print_recreate_columnfamily(self, ksname, cfname, out):
@@ -1068,116 +1066,8 @@ class Shell(cmd.Cmd):
 
         Writes output to the given out stream.
         """
-        layout = self.get_columnfamily_layout(ksname, cfname)
-        cfname = self.cql_protect_name(layout.name)
-        out.write("CREATE TABLE %s (\n" % cfname)
-
-        for col in layout.columns:
-            colname = self.cql_protect_name(col.name)
-            coltype = col.cqltype
-
-            # Reversed types only matter for clustering order, not column definitions
-            if issubclass(coltype, ReversedType):
-                coltype = coltype.subtypes[0]
-
-            out.write("  %s %s,\n" % (colname, coltype.cql_parameterized_type()))
-
-        out.write("  PRIMARY KEY (")
-        partkeynames = self.cql_protect_names(layout.partition_key_columns)
-        if len(partkeynames) > 1:
-            partkey = "(%s)" % ', '.join(partkeynames)
-        else:
-            partkey = partkeynames[0]
-        pk_parts = [partkey] + self.cql_protect_names(layout.clustering_key_columns)
-        out.write(', '.join(pk_parts) + ')')
-
-        out.write("\n)")
-        joiner = 'WITH'
-
-        if layout.is_compact_storage():
-            out.write(' WITH COMPACT STORAGE')
-            joiner = 'AND'
-
-        # check if we need a CLUSTERING ORDER BY clause
-        if layout.clustering_key_columns:
-            # get a list of clustering component types
-            if issubclass(layout.comparator, CompositeType):
-                clustering_types = layout.comparator.subtypes
-            else:
-                clustering_types = [layout.comparator]
-
-            # only write CLUSTERING ORDER clause of we have >= 1 DESC item
-            if any(issubclass(t, ReversedType) for t in clustering_types):
-                if layout.is_compact_storage():
-                    out.write(' AND\n ')
-                else:
-                    out.write(' WITH')
-                out.write(' CLUSTERING ORDER BY (')
-
-                clustering_names = self.cql_protect_names(layout.clustering_key_columns)
-
-                inner = []
-                for colname, coltype in zip(clustering_names, clustering_types):
-                    ordering = "DESC" if issubclass(coltype, ReversedType) else "ASC"
-                    inner.append("%s %s" % (colname, ordering))
-                out.write(", ".join(inner))
-
-                out.write(")")
-                joiner = "AND"
-
-        cf_opts = []
-        compaction_strategy = trim_if_present(getattr(layout, 'compaction_strategy_class'),
-                                              'org.apache.cassandra.db.compaction.')
-        for cql3option, layoutoption in cqlruleset.columnfamily_layout_options:
-            if layoutoption is None:
-                layoutoption = cql3option
-            optval = getattr(layout, layoutoption, None)
-            if optval is None:
-                if layoutoption == 'bloom_filter_fp_chance':
-                    if compaction_strategy == 'LeveledCompactionStrategy':
-                        optval = 0.1
-                    else:
-                        optval = 0.01
-                else:
-                    continue
-            elif layoutoption == 'compaction_strategy_class':
-                optval = compaction_strategy
-            cf_opts.append((cql3option, self.cql_protect_value(optval)))
-        for cql3option, layoutoption, _ in cqlruleset.columnfamily_layout_map_options:
-            if layoutoption is None:
-                layoutoption = cql3option
-            optmap = getattr(layout, layoutoption, {})
-            if layoutoption == 'compression_parameters':
-                compclass = optmap.get('sstable_compression')
-                if compclass is not None:
-                    optmap['sstable_compression'] = \
-                            trim_if_present(compclass, 'org.apache.cassandra.io.compress.')
-            if layoutoption == 'compaction_strategy_options':
-                optmap['class'] = compaction_strategy
-
-            cf_opts.append((cql3option, optmap))
-
-        if cf_opts:
-            for optname, optval in cf_opts:
-                if isinstance(optval, dict):
-                    optval = '{%s}' % ', '.join(['%s: %s' % (self.cql_protect_value(k),
-                                                             self.cql_protect_value(v))
-                                                 for (k, v) in optval.items()])
-                out.write(" %s\n  %s=%s" % (joiner, optname, optval))
-                joiner = 'AND'
+        out.write(self.conn.metadata.keyspaces[ksname].tables[cfname].as_cql_query())
         out.write(";\n")
-
-        for col in [ c for c in layout.columns if c.index_name is not None ]:
-            out.write('\n')
-            if col.index_type != 'CUSTOM':
-                out.write('CREATE INDEX %s ON %s (%s);\n'
-                             % (col.index_name, cfname, self.cql_protect_name(col.name)))
-            else:
-                out.write("CREATE CUSTOM INDEX %s ON %s (%s) USING '%s';\n"
-                             % (col.index_name,
-                                cfname,
-                                self.cql_protect_name(col.name),
-                                col.index_options[u'class_name']))
 
     def describe_keyspaces(self):
         print
