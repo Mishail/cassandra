@@ -638,7 +638,7 @@ class Shell(cmd.Cmd):
             raise KeyspaceNotFound('Keyspace %r not found.' % ksname)
 
     def get_keyspaces(self):
-        return self.make_hacktastic_thrift_call('describe_keyspaces')
+        return self.conn.metadata.keyspaces.values()
 
     def get_schema_versions(self):
         return self.make_hacktastic_thrift_call('describe_schema_versions')
