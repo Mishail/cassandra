@@ -878,7 +878,10 @@ class Shell(cmd.Cmd):
             try:
                 # todo: sort out decoder thing
                 #self.session.execute(statement, decoder=decoder)
-                self.session.execute(statement)
+                from cassandra.query import SimpleStatement
+                stmt = SimpleStatement(statement, tracing_enabled=self.tracing_enabled)
+                self.session.execute(stmt)
+
                 break
             # todo: sort out
             # except cql.IntegrityError, err:
