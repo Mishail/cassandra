@@ -591,13 +591,13 @@ class Shell(cmd.Cmd):
         return dicts
 
     def get_keyspace_names(self):
-        return self.conn.metadata.keyspaces.keys()
+        return map(str, self.conn.metadata.keyspaces.keys())
 
     def get_columnfamily_names(self, ksname=None):
         if ksname is None:
             ksname = self.current_keyspace
 
-        return [str(name) for name in self.conn.metadata.keyspaces[ksname].tables.keys()]
+        return map(str, self.conn.metadata.keyspaces[ksname].tables.keys())
 
     def get_index_names(self, ksname=None):
         idxnames = []
