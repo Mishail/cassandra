@@ -472,8 +472,6 @@ class Shell(cmd.Cmd):
             self.conn = Cluster(contact_points=(hostname,), port=port, cql_version=cqlver)
         self.set_expanded_cql_version(cqlver)
 
-        # we could set the keyspace through cql.connect(), but as of 1.0.10,
-        # it doesn't quote the keyspace for USE :(
         if keyspace:
             self.session = self.conn.connect(keyspace)
         else:
@@ -613,13 +611,25 @@ class Shell(cmd.Cmd):
         layout = self.get_columnfamily_layout(ksname, cfname)
         return [col.name for col in layout.columns]
 
-    # ===== thrift-dependent parts =====
+
 
     def get_cluster_name(self):
         return self.conn.metadata.cluster_name
 
     def get_partitioner(self):
         return self.conn.metadata.partitioner
+
+    def get_keyspace(self, ksname):
+        if ksname in self.conn.metadata.keyspaces:
+            return self.conn.metadata.keyspaces[ksname]
+        else:
+            raise KeyspaceNotFound('Keyspace %r not found.' % ksname)
+
+
+    def get_keyspaces(self):
+        return self.conn.metadata.keyspaces.values()
+
+    # ===== thrift-dependent parts =====
 
     def get_snitch(self):
         return self.make_hacktastic_thrift_call('describe_snitch')
@@ -628,18 +638,6 @@ class Shell(cmd.Cmd):
         if self.current_keyspace is None or self.current_keyspace == 'system':
             raise NoKeyspaceError("Ring view requires a current non-system keyspace")
         return self.make_hacktastic_thrift_call('describe_ring', self.current_keyspace)
-
-    def get_keyspace(self, ksname):
-        if ksname in self.conn.metadata.keyspaces:
-            return self.conn.metadata.keyspaces[ksname]
-        else:
-            raise KeyspaceNotFound('Keyspace %r not found.' % ksname)
-
-    def get_keyspaces(self):
-        return self.conn.metadata.keyspaces.values()
-
-    def get_schema_versions(self):
-        return self.make_hacktastic_thrift_call('describe_schema_versions')
 
     def trace_next_query(self):
         return self.make_hacktastic_thrift_call('trace_next_query')
@@ -878,17 +876,20 @@ class Shell(cmd.Cmd):
         trynum = 1
         while True:
             try:
-                self.session.execute(statement, decoder=decoder)
+                # todo: sort out decoder thing
+                #self.session.execute(statement, decoder=decoder)
+                self.session.execute(statement)
                 break
-            except cql.IntegrityError, err:
-                self.printerr("Attempt #%d: %s" % (trynum, str(err)))
-                trynum += 1
-                if trynum > self.num_retries:
-                    return False
-                time.sleep(1*trynum)
-            except cql.ProgrammingError, err:
-                self.printerr(str(err))
-                return False
+            # todo: sort out
+            # except cql.IntegrityError, err:
+            #     self.printerr("Attempt #%d: %s" % (trynum, str(err)))
+            #     trynum += 1
+            #     if trynum > self.num_retries:
+            #         return False
+            #     time.sleep(1*trynum)
+            # except cql.ProgrammingError, err:
+            #     self.printerr(str(err))
+            #     return False
             except CQL_ERRORS, err:
                 self.printerr(str(err))
                 return False
