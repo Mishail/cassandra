@@ -826,7 +826,6 @@ class Shell(cmd.Cmd):
                     line = self.get_input_line(self.prompt)
                     self.statement.write(line)
                     if self.onecmd(self.statement.getvalue()):
-                        self._refresh_utype_dict()
                         self.reset_statement()
                 except EOFError:
                     self.handle_eof()
@@ -979,6 +978,8 @@ class Shell(cmd.Cmd):
                 self.printerr(traceback.format_exc())
                 return False
 
+        if self._could_change_schema(statement):
+            self._refresh_utype_dict()
         if statement[:6].lower() == 'select' or statement.lower().startswith("list"):
             self.print_result(self.cursor, with_default_limit)
         elif self.cursor.rowcount == 1:
@@ -1954,6 +1955,12 @@ class Shell(cmd.Cmd):
         if shownum:
             text = '%s:%d:%s' % (self.stdin.name, self.lineno, text)
         self.writeresult(text, color, newline=newline, out=sys.stderr)
+
+    @staticmethod
+    def _could_change_schema(statement):
+        import re
+        return re.match(r"(alter|create|drop)\s+type", statement.lower())
+
 
 class ErrorHandlingSchemaDecoder(cql.decoders.SchemaDecoder):
     def name_decode_error(self, err, namebytes, expectedtype):
