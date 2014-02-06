@@ -102,7 +102,7 @@ except ImportError, e:
              'Error: %s\n' % (sys.executable, sys.path, e))
 
 from cassandra.cluster import Cluster
-#import cql.decoders
+#import cql.decoders TODO: cleanup
 from cql.cursor import _VOID_DESCRIPTION
 #from cql.cqltypes import (cql_types, cql_typename, lookup_casstype, lookup_cqltype,
 #                          CassandraType, ReversedType, CompositeType)
@@ -596,10 +596,8 @@ class Shell(cmd.Cmd):
     def get_columnfamily_names(self, ksname=None):
         if ksname is None:
             ksname = self.current_keyspace
-        cf_q = """select columnfamily_name from system.schema_columnfamilies
-                   where keyspace_name=%s""" % (self.cql_unprotect_name(ksname),)
 
-        return [str(row[0]) for row in self.session.execute(cf_q)]
+        return [str(name) for name in self.conn.metadata.keyspaces[ksname].tables.keys()]
 
     def get_index_names(self, ksname=None):
         idxnames = []
@@ -750,8 +748,8 @@ class Shell(cmd.Cmd):
                         self.reset_statement()
                 except EOFError:
                     self.handle_eof()
-                except cql.Error, cqlerr:
-                    self.printerr(str(cqlerr))
+                # except cql.Error, cqlerr: #TODO: handle errors
+                #     self.printerr(str(cqlerr))
                 except KeyboardInterrupt:
                     self.reset_statement()
                     print
@@ -1103,8 +1101,9 @@ class Shell(cmd.Cmd):
         print '\nCluster: %s' % self.get_cluster_name()
         p = trim_if_present(self.get_partitioner(), 'org.apache.cassandra.dht.')
         print 'Partitioner: %s' % p
-        snitch = trim_if_present(self.get_snitch(), 'org.apache.cassandra.locator.')
-        print 'Snitch: %s\n' % snitch
+        # TODO: snitch?
+        #snitch = trim_if_present(self.get_snitch(), 'org.apache.cassandra.locator.')
+        #print 'Snitch: %s\n' % snitch
         if self.current_keyspace is not None \
         and self.current_keyspace != 'system':
             print "Range ownership:"
