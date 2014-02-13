@@ -460,7 +460,7 @@ class Shell(cmd.Cmd):
     shunted_query_out = None
     csv_dialect_defaults = dict(delimiter=',', doublequote=False,
                                 escapechar='\\', quotechar='"')
-    utypes_dict = {}
+    utypes_meta = None
 
     def __init__(self, hostname, port, transport_factory, color=False,
                  username=None, password=None, encoding=None, stdin=None, tty=True,
@@ -520,9 +520,9 @@ class Shell(cmd.Cmd):
             self.show_line_nums = True
         self.stdin = stdin
         self.query_out = sys.stdout
-        self.refresh_utype_dict()
+        self.refresh_utypes_meta()
         #UserTypes will use it to get theirs field names
-        usertypes.get_field_names = lambda k,n: [row[0] for row in self.utypes_dict.get(k, {}).get(n, [])]
+        usertypes.get_field_names = lambda k,n: self.utypes_meta.get_usertype_field_names(k,n)
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
@@ -639,14 +639,12 @@ class Shell(cmd.Cmd):
         if ksname is None:
             ksname = self.current_keyspace
 
-        ut_names_dict = self.utypes_dict.get(ksname, {})
-        return [str(ut_name) for ut_name in ut_names_dict.keys()]
+        return self.utypes_meta.get_usertypes_names(ksname)
 
     def get_usertype_layout(self, ksname, typename):
         if ksname is None:
             ksname = self.current_keyspace
-        ks_dict = self.utypes_dict.get(ksname, {})
-        layout = ks_dict.get(typename, [])
+        layout = self.utypes_meta.get_usertype_layout(ksname, typename)
 
         if not layout:
             raise UserTypeNotFound("User type %r not found" % typename)
@@ -719,22 +717,14 @@ class Shell(cmd.Cmd):
         cols = self.fetchdict_all()
         return cql3handling.CqlTableDef.from_layout(layout, cols)
 
-    def fetch_usertypes_dict(self):
+    def build_usertypes_meta(self):
         ut_q = """select * from system.schema_usertypes"""
         self.cursor.execute(ut_q, consistency_level='ONE')
         data = self.fetchdict_all()
         if not data:
             return None
 
-        result = {}
-        for row in data:
-            ksname = row[u'keyspace_name']
-            if ksname not in result:
-                result[ksname] = {}
-            utname = row[u'type_name']
-
-            result[ksname][utname] = zip(row[u'column_names'], row[u'column_types'])
-        return result
+        return cql3handling.UserTypesMeta.from_layout(data)
 
     # ===== end cql3-dependent parts =====
 
@@ -798,9 +788,9 @@ class Shell(cmd.Cmd):
                 return
             yield newline
 
-    def refresh_utype_dict(self):
+    def refresh_utypes_meta(self):
         try:
-            self.utypes_dict = self.fetch_usertypes_dict()
+            self.utypes_meta = self.build_usertypes_meta()
         except Exception, e:
             if self.debug:
                 import traceback
@@ -972,7 +962,7 @@ class Shell(cmd.Cmd):
                 return False
 
         if self.could_change_schema(statement):
-            self.refresh_utype_dict()
+            self.refresh_utypes_meta()
         if statement[:6].lower() == 'select' or statement.lower().startswith("list"):
             self.print_result(self.cursor, with_default_limit)
         elif self.cursor.rowcount == 1:
@@ -1156,7 +1146,7 @@ class Shell(cmd.Cmd):
         layout = self.get_usertype_layout(ksname, utname)
         out.write("CREATE TYPE %s (\n" % utname)
         for (index,(tname,ttype)) in enumerate(layout, 1):
-            out.write("  %s %s" % (tname, lookup_casstype(ttype).cql_parameterized_type()))
+            out.write("  %s %s" % (tname, ttype))
             if index < len(layout):
                 out.write(",\n")
             else:

@@ -1235,3 +1235,31 @@ class CqlTableDef:
     def __str__(self):
         return '<%s %s.%s>' % (self.__class__.__name__, self.keyspace, self.name)
     __repr__ = __str__
+
+class UserTypesMeta(object):
+    _meta = {}
+
+    def __init__(self, meta):
+        self._meta = meta
+
+    @classmethod
+    def from_layout(cls, layout):
+        result = {}
+        for row in layout:
+            ksname = row[u'keyspace_name']
+            if ksname not in result:
+                result[ksname] = {}
+            utname = row[u'type_name']
+
+            result[ksname][utname] = zip(row[u'column_names'], row[u'column_types'])
+        return cls(meta=result)
+
+    def get_usertypes_names(self, keyspace):
+        return map(str, self._meta.get(keyspace, {}).keys())
+
+    def get_usertype_field_names(self, keyspace, type):
+        return [row[0] for row in self._meta.get(keyspace, {}).get(type, [])]
+
+    def get_usertype_layout(self, ksname, typename):
+        return [(field[0], lookup_casstype(field[1]).cql_parameterized_type()) for field in
+                self._meta.get(ksname, {}).get(typename, [])]
