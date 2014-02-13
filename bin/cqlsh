@@ -526,9 +526,9 @@ class Shell(cmd.Cmd):
         self._refresh_utype_dict()
         from functools import partial
         #Properly return type information for user types
-        CassandraType.cql_parameterized_type = classmethod(usertypes.cql_parameterized_type)
+        #CassandraType.cql_parameterized_type = classmethod(usertypes.cql_parameterized_type)
         #Deserialize user type values using internal ut_dict dictionary
-        CassandraType.from_binary = classmethod(partial(usertypes.from_binary, lambda: self._utypes_dict))
+        #CassandraType.from_binary = classmethod(partial(usertypes.from_binary, lambda: self._utypes_dict))
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
