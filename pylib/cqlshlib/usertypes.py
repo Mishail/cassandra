@@ -16,7 +16,7 @@
 
 from cql.marshal import uint16_unpack
 
-USER_TYPE = '\'org.apache.cassandra.db.marshal.UserType\''
+#USER_TYPE = '\'org.apache.cassandra.db.marshal.UserType\''
 
 
 # def _is_usertype(cls):
@@ -78,14 +78,17 @@ USER_TYPE = '\'org.apache.cassandra.db.marshal.UserType\''
 #     return cls.deserialize(byts)
 
 from cql.cqltypes import CompositeType
+from formatting import formatter_for, format_value_utype
 
 class UserType(CompositeType):
     typename = 'UserType'
 
     @classmethod
     def apply_parameters(cls, *subtypes):
+        ksname = subtypes[0].cassname
         newname = subtypes[1].cassname.decode("hex")
-        return type(newname, (cls,), {'subtypes': subtypes[2:], 'cassname': newname, 'typename': newname})
+        formatter_for(newname)(format_value_utype)
+        return type(newname, (cls,), {'subtypes': subtypes[2:], 'cassname': cls.cassname, 'typename': newname})
 
     @classmethod
     def cql_parameterized_type(cls):
@@ -102,7 +105,7 @@ class UserType(CompositeType):
             p += 2
             item = byts[p:p + itemlen]
             p += itemlen
-            result.append((col_name, col_type.from_binary(item)))
+            result.append((str(col_name), col_type.from_binary(item)))
             p += 1
 
         return result

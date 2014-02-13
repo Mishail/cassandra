@@ -21,8 +21,6 @@ import math
 from collections import defaultdict
 from . import wcwidth
 from .displaying import colorme, FormattedValue, DEFAULT_VALUE_COLORS
-from cql import cqltypes
-from usertypes import USER_TYPE
 
 unicode_controlchars_re = re.compile(r'[\x00-\x31\x7f-\xa0]')
 controlchars_re = re.compile(r'[\x00-\x31\x7f-\xff]')
@@ -240,7 +238,6 @@ def format_value_map(val, encoding, colormap, time_format, float_precision, subt
     displaywidth = 4 * len(subs) + sum(k.displaywidth + v.displaywidth for (k, v) in subs)
     return FormattedValue(bval, coloredval, displaywidth)
 
-@formatter_for(USER_TYPE)
 def format_value_utype(val, encoding, colormap, time_format, float_precision, subtypes, nullval, **_):
     def format_field_value(v, subtype):
         return format_value(subtype, v, encoding=encoding, colormap=colormap,
@@ -250,7 +247,6 @@ def format_value_utype(val, encoding, colormap, time_format, float_precision, su
     def format_field_name(name):
         return format_value_text(name, encoding=encoding, colormap=colormap, quote=False)
 
-    subtypes = subtypes[2:]
     subs = [(format_field_name(k), format_field_value(v, subtypes[index])) for (index, (k, v)) in enumerate(val)]
     bval = '{' + ', '.join(k.strval + ': ' + v.strval for (k, v) in subs) + '}'
     lb, comma, colon, rb = [colormap['collection'] + s + colormap['reset']
