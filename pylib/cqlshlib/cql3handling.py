@@ -1257,9 +1257,9 @@ class UserTypesMeta(object):
     def get_usertypes_names(self, keyspace):
         return map(str, self._meta.get(keyspace, {}).keys())
 
-    def get_usertype_field_names(self, keyspace, type):
+    def get_field_names(self, keyspace, type):
         return [row[0] for row in self._meta.get(keyspace, {}).get(type, [])]
 
-    def get_usertype_layout(self, ksname, typename):
+    def get_fields_with_types(self, ksname, typename):
         return [(field[0], lookup_casstype(field[1]).cql_parameterized_type()) for field in
                 self._meta.get(ksname, {}).get(typename, [])]
