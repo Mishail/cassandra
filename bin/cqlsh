@@ -521,8 +521,8 @@ class Shell(cmd.Cmd):
         self.stdin = stdin
         self.query_out = sys.stdout
         self.refresh_utype_dict()
-
-        usertypes.get_field_names = lambda k,n: self.utypes_dict.get(k, {}).get(n, [])
+        #UserTypes will use it to get theirs field names
+        usertypes.get_field_names = lambda k,n: [row[0] for row in self.utypes_dict.get(k, {}).get(n, [])]
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
@@ -733,8 +733,7 @@ class Shell(cmd.Cmd):
                 result[ksname] = {}
             utname = row[u'type_name']
 
-            result[ksname][utname] = row[u'column_names']
-
+            result[ksname][utname] = zip(row[u'column_names'], row[u'column_types'])
         return result
 
     # ===== end cql3-dependent parts =====
@@ -1157,7 +1156,7 @@ class Shell(cmd.Cmd):
         layout = self.get_usertype_layout(ksname, utname)
         out.write("CREATE TYPE %s (\n" % utname)
         for (index,(tname,ttype)) in enumerate(layout, 1):
-            out.write("  %s %s" % (tname, ttype.cql_parameterized_type()))
+            out.write("  %s %s" % (tname, lookup_casstype(ttype).cql_parameterized_type()))
             if index < len(layout):
                 out.write(",\n")
             else:
