@@ -522,6 +522,8 @@ class Shell(cmd.Cmd):
         self.query_out = sys.stdout
         self.refresh_utype_dict()
 
+        usertypes.get_field_names = lambda k,n: self.utypes_dict.get(k, {}).get(n, [])
+
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
         self.set_cql_version(ver)
@@ -731,7 +733,7 @@ class Shell(cmd.Cmd):
                 result[ksname] = {}
             utname = row[u'type_name']
 
-            result[ksname][utname] = zip(row[u'column_names'], map(lookup_casstype, row[u'column_types']))
+            result[ksname][utname] = row[u'column_names']
 
         return result
 
