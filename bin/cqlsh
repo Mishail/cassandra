@@ -104,9 +104,9 @@ except ImportError, e:
 
 from cassandra.cluster import Cluster
 #import cql.decoders TODO: cleanup
-from cql.cursor import _VOID_DESCRIPTION
-#from cql.cqltypes import (cql_types, cql_typename, lookup_casstype, lookup_cqltype,
-#                          CassandraType, ReversedType, CompositeType)
+#from cql.cursor import _VOID_DESCRIPTION
+from cassandra.cqltypes import (cql_typename, lookup_casstype,
+                          CassandraType, ReversedType, CompositeType)
 
 # cqlsh should run correctly when run out of a Cassandra source tree,
 # out of an unpacked Cassandra tarball, and after a proper package install.
