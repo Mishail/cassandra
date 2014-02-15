@@ -22,8 +22,8 @@ TRACING_KS = 'system_traces'
 SESSIONS_CF = 'sessions'
 EVENTS_CF = 'events'
 
-def print_trace_session(shell, cursor, session_id):
-    rows  = fetch_trace_session(cursor, session_id)
+def print_trace_session(shell, session, session_id):
+    rows = fetch_trace_session(session, session_id)
     if not rows:
         shell.printerr("Session %s wasn't found." % session_id)
         return
@@ -40,39 +40,35 @@ def print_trace_session(shell, cursor, session_id):
     shell.print_formatted_result(formatted_names, formatted_values)
     shell.writeresult('')
 
-def fetch_trace_session(cursor, session_id):
-    cursor.execute("SELECT request, coordinator, started_at, duration "
+def fetch_trace_session(session, session_id):
+    traces = session.execute("SELECT request, coordinator, started_at, duration "
                    "FROM %s.%s "
-                   "WHERE session_id = %s" % (TRACING_KS, SESSIONS_CF, session_id),
-                   consistency_level='ONE')
-    session = cursor.fetchone()
-    if not session:
+                   "WHERE session_id = %s" % (TRACING_KS, SESSIONS_CF, session_id))
+    if not traces:
         return []
-    (request, coordinator, started_at, duration) = session
-    cursor.execute("SELECT activity, event_id, source, source_elapsed "
+
+    trace = traces[0]
+
+    events = session.execute("SELECT activity, event_id, source, source_elapsed "
                    "FROM %s.%s "
-                   "WHERE session_id = %s" % (TRACING_KS, EVENTS_CF, session_id),
-                   consistency_level='ONE')
-    events = cursor.fetchall()
+                   "WHERE session_id = %s" % (TRACING_KS, EVENTS_CF, session_id))
 
     rows = []
     # append header row (from sessions table).
-    rows.append([request, format_timestamp(started_at), coordinator, 0])
+    rows.append([trace.request, trace.started_at, trace.coordinator, 0])
     # append main rows (from events table).
-    for activity, event_id, source, source_elapsed in events:
-        rows.append([activity, format_timeuuid(event_id), source, source_elapsed])
+    for event in events:
+        rows.append([event.activity, format_timeuuid(event.event_id), event.source, event.source_elapsed])
     # append footer row (from sessions table).
-    if duration:
-        finished_at = format_timestamp(started_at + (duration / 1000000.))
+    if trace.duration:
+        from datetime import timedelta
+        finished_at = trace.started_at + timedelta(microseconds=trace.duration)
     else:
-        finished_at = duration = "--"
+        finished_at = trace.duration = "--"
 
-    rows.append(['Request complete', finished_at, coordinator, duration])
+    rows.append(['Request complete', finished_at, trace.coordinator, trace.duration])
 
     return rows
-
-def format_timestamp(value):
-    return format_time(int(value * 1000))
 
 def format_timeuuid(value):
     return format_time((value.get_time() - 0x01b21dd213814000) / 10000)

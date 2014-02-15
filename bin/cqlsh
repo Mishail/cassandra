@@ -30,6 +30,7 @@ exit 1
 ":"""
 
 from __future__ import with_statement
+from cassandra.query import SimpleStatement
 
 description = "CQL Shell for Apache Cassandra"
 version = "4.1.1"
@@ -367,8 +368,9 @@ class DecodeError(Exception):
     def __init__(self, thebytes, err, expectedtype, colname=None):
         self.thebytes = thebytes
         self.err = err
-        if isinstance(expectedtype, type) and issubclass(expectedtype, CassandraType):
-            expectedtype = expectedtype.cql_parameterized_type()
+        #fixme
+        # if isinstance(expectedtype, type) and issubclass(expectedtype, CassandraType):
+        #     expectedtype = expectedtype.cql_parameterized_type()
         self.expectedtype = expectedtype
         self.colname = colname
 
@@ -476,7 +478,7 @@ class Shell(cmd.Cmd):
             self.session = self.conn.connect(keyspace)
         else:
             self.session = self.conn.connect()
-        self.session.row_factory = cassandra.decoder.dict_factory
+        #self.session.row_factory = cassandra.decoder.dict_factory
         self.get_connection_versions()
 
         self.current_keyspace = keyspace
@@ -567,9 +569,9 @@ class Shell(cmd.Cmd):
     def get_connection_versions(self):
         result, = self.session.execute("select * from system.local where key = 'local'")
         vers = {
-            'build': result['release_version'],
-            'thrift': result['thrift_version'],
-            'cql': result['cql_version'],
+            'build': result.release_version,
+            'thrift': result.thrift_version,
+            'cql': result.cql_version,
         }
         self.connection_versions = vers
         self.cass_ver_tuple = tuple(map(int, vers['build'].split('-', 1)[0].split('.')[:3]))
@@ -638,9 +640,6 @@ class Shell(cmd.Cmd):
         if self.current_keyspace is None or self.current_keyspace == 'system':
             raise NoKeyspaceError("Ring view requires a current non-system keyspace")
         return self.make_hacktastic_thrift_call('describe_ring', self.current_keyspace)
-
-    def trace_next_query(self):
-        return self.make_hacktastic_thrift_call('trace_next_query')
 
     def make_hacktastic_thrift_call(self, call, *args):
         client = self.conn.client
@@ -837,7 +836,7 @@ class Shell(cmd.Cmd):
 
     def do_use(self, parsed):
         ksname = parsed.get_binding('ksname')
-        if self.perform_statement_untraced(parsed.extract_orig()):
+        if self.perform_simple_statement(SimpleStatement(parsed.extract_orig())):
             if ksname[0] == '"' and ksname[-1] == '"':
                 self.current_keyspace = self.cql_unprotect_name(ksname)
             else:
@@ -853,35 +852,31 @@ class Shell(cmd.Cmd):
         if with_default_limit:
             statement = "%s LIMIT %d;" % (statement[:-1], DEFAULT_SELECT_LIMIT)
         self.perform_statement(statement,
-                               decoder=ErrorHandlingSchemaDecoder,
+                               #decoder=ErrorHandlingSchemaDecoder, #fixme
                                with_default_limit=with_default_limit)
 
     def perform_statement(self, statement, decoder=None, with_default_limit=False):
+        from cassandra.query import SimpleStatement
+        stmt = SimpleStatement(statement, tracing_enabled=self.tracing_enabled)
+        result = self.perform_simple_statement(stmt,
+                                                decoder=decoder, #todo: remove decoder
+                                                with_default_limit=with_default_limit)
         if self.tracing_enabled:
-            session_id = UUID(bytes=self.trace_next_query())
-            result = self.perform_statement_untraced(statement,
-                                                     decoder=decoder,
-                                                     with_default_limit=with_default_limit)
             time.sleep(0.5) # trace writes are async so we wait a little.
-            print_trace_session(self, self.session, session_id)
-            return result
-        else:
-            return self.perform_statement_untraced(statement,
-                                                   decoder=decoder,
-                                                   with_default_limit=with_default_limit)
+            print_trace_session(self, self.session, stmt.trace.trace_id)
 
-    def perform_statement_untraced(self, statement, decoder=None, with_default_limit=False):
+        return result
+
+
+    def perform_simple_statement(self, statement, decoder=None, with_default_limit=False):
         if not statement:
             return False
         trynum = 1
+        result = None
         while True:
             try:
                 # todo: sort out decoder thing
-                #self.session.execute(statement, decoder=decoder)
-                from cassandra.query import SimpleStatement
-                stmt = SimpleStatement(statement, tracing_enabled=self.tracing_enabled)
-                self.session.execute(stmt)
-
+                result = self.session.execute(statement, trace=self.tracing_enabled)
                 break
             # todo: sort out
             # except cql.IntegrityError, err:
@@ -901,12 +896,13 @@ class Shell(cmd.Cmd):
                 self.printerr(traceback.format_exc())
                 return False
 
-        if statement[:6].lower() == 'select' or statement.lower().startswith("list"):
-            self.print_result(self.session, with_default_limit)
-        elif self.session.rowcount == 1:
+        if statement.query_string[:6].lower() == 'select' or statement.query_string.lower().startswith("list"):
+            self.print_result(result, with_default_limit)
+        elif not result:
             # CAS INSERT/UPDATE
             self.writeresult("")
-            self.print_static_result(self.session)
+            #fixme
+            #self.print_static_result(self.session)
         self.flush_output()
         return True
 
@@ -925,9 +921,9 @@ class Shell(cmd.Cmd):
         self.decoding_errors = []
 
         self.writeresult("")
-        if cursor.rowcount != 0:
+        if cursor :
             self.print_static_result(cursor)
-        self.writeresult("(%d rows)" % cursor.rowcount)
+        self.writeresult("(%d rows)" % len(cursor))
         self.writeresult("")
 
         if self.decoding_errors:
@@ -938,18 +934,12 @@ class Shell(cmd.Cmd):
                                  % (len(self.decoding_errors) - 2), color=RED)
 
         if with_default_limit:
-            if (self.is_count_result(cursor) and self.get_count(cursor) == DEFAULT_SELECT_LIMIT) \
-                    or cursor.rowcount == DEFAULT_SELECT_LIMIT:
+            if len(cursor) == DEFAULT_SELECT_LIMIT:
                 self.writeresult("Default LIMIT of %d was used. "
                                  "Specify your own LIMIT clause to get more results."
                                  % DEFAULT_SELECT_LIMIT, color=RED)
                 self.writeresult("")
 
-    def is_count_result(self, cursor):
-        return cursor.description == [(u'count', 'LongType', None, None, None, None, True)]
-
-    def get_count(self, cursor):
-        return lookup_casstype('LongType').deserialize(cursor.result[0][0].value)
 
     def print_static_result(self, cursor):
         colnames = [d[0] for d in cursor.description]
@@ -1342,7 +1332,7 @@ class Shell(cmd.Cmd):
         )
         if self.debug:
             print 'Import using CQL: %s' % query
-        return self.perform_statement_untraced(query)
+        return self.perform_simple_statement(SimpleStatement(query))
 
     def perform_csv_export(self, ks, cf, columns, fname, opts):
         dialect_options = self.csv_dialect_defaults.copy()
