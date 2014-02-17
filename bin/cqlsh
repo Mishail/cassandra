@@ -137,7 +137,7 @@ if os.path.exists(OLD_HISTORY):
 DEFAULT_HOST = 'localhost'
 DEFAULT_PORT = 9042
 DEFAULT_CQLVER = '3.1.4'
-DEFAULT_TRANSPORT_FACTORY = 'cqlshlib.tfactory.regular_transport_factory'
+DEFAULT_TRANSPORT_FACTORY = 'cqlshlib.tfactory.regular_transport_factory' #FIXME
 
 DEFAULT_TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
 DEFAULT_FLOAT_PRECISION = 5
@@ -172,7 +172,9 @@ parser.add_option('--cqlversion', default=DEFAULT_CQLVER,
                   help='Specify a particular CQL version (default: %default).'
                        ' Examples: "3.0.3", "3.1.0"')
 
-CQL_ERRORS = (cassandra.AlreadyExists, )
+#TODO: add all driver's exceptions
+CQL_ERRORS = (cassandra.AlreadyExists, cassandra.AuthenticationFailed, cassandra.InvalidRequest,
+        cassandra.Timeout, cassandra.Unauthorized, cassandra.OperationTimedOut, cassandra.cluster.NoHostAvailable)
 
 debug_completion = bool(os.environ.get('CQLSH_DEBUG_COMPLETION', '') == 'YES')
 
@@ -442,7 +444,7 @@ class Shell(cmd.Cmd):
     continue_prompt = "   ... "
     keyspace_prompt = custom_prompt + "cqlsh:%s> "
     keyspace_continue_prompt = "%s    ... "
-    num_retries = 4
+    num_retries = 4 #TODO ???
     show_line_nums = False
     debug = False
     stop = False
@@ -476,7 +478,6 @@ class Shell(cmd.Cmd):
             self.session = self.conn.connect(keyspace)
         else:
             self.session = self.conn.connect()
-        #self.session.row_factory = cassandra.decoder.dict_factory
         self.get_connection_versions()
 
         self.current_keyspace = keyspace
@@ -532,17 +533,6 @@ class Shell(cmd.Cmd):
     def myformat_colname(self, name):
         return self.myformat_value(name, colormap=COLUMN_NAME_COLORS)
 
-    # cql/cursor.py:Cursor.decode_row() function, modified to not turn '' into None.
-    def decode_row(self, cursor, row):
-        values = []
-        bytevals = cursor.columnvalues(row)
-        for val, vtype, nameinfo in zip(bytevals, cursor.column_types, cursor.name_info):
-            if val == '':
-                values.append(val)
-            else:
-                values.append(cursor.decoder.decode_value(val, vtype, nameinfo[0]))
-        return values
-
     def report_connection(self):
         self.show_host()
         self.show_version()
@@ -574,6 +564,7 @@ class Shell(cmd.Cmd):
         self.connection_versions = vers
         self.cass_ver_tuple = tuple(map(int, vers['build'].split('-', 1)[0].split('.')[:3]))
 
+    #FIXME
     def fetchdict(self):
         row = self.session.fetchone()
         if row is None:
@@ -581,6 +572,7 @@ class Shell(cmd.Cmd):
         desc = self.session.description
         return dict(zip([d[0] for d in desc], row))
 
+    #FIXME
     def fetchdict_all(self):
         dicts = []
         for row in self.session:
@@ -611,8 +603,6 @@ class Shell(cmd.Cmd):
         layout = self.get_columnfamily_layout(ksname, cfname)
         return [col.name for col in layout.columns]
 
-
-
     def get_cluster_name(self):
         return self.conn.metadata.cluster_name
 
@@ -629,24 +619,15 @@ class Shell(cmd.Cmd):
     def get_keyspaces(self):
         return self.conn.metadata.keyspaces.values()
 
-    # ===== thrift-dependent parts =====
-
-    def get_snitch(self):
-        return self.make_hacktastic_thrift_call('describe_snitch')
 
     def get_ring(self):
         if self.current_keyspace is None or self.current_keyspace == 'system':
             raise NoKeyspaceError("Ring view requires a current non-system keyspace")
-        return self.make_hacktastic_thrift_call('describe_ring', self.current_keyspace)
-
-    def make_hacktastic_thrift_call(self, call, *args):
-        client = self.conn.client
-        return getattr(client, call)(*args)
-
-    # ===== end thrift-dependent parts =====
+        return self.conn.metadata.token_map.tokens_to_hosts_by_ks[self.current_keyspace]
 
     # ===== cql3-dependent parts =====
 
+    #FIXME
     def get_columnfamily_layout(self, ksname, cfname):
         if ksname is None:
             ksname = self.current_keyspace
@@ -849,15 +830,12 @@ class Shell(cmd.Cmd):
         with_default_limit = parsed.get_binding('limit') is None
         if with_default_limit:
             statement = "%s LIMIT %d;" % (statement[:-1], DEFAULT_SELECT_LIMIT)
-        self.perform_statement(statement,
-                               #decoder=ErrorHandlingSchemaDecoder, #fixme
-                               with_default_limit=with_default_limit)
+        self.perform_statement(statement, with_default_limit=with_default_limit)
 
-    def perform_statement(self, statement, decoder=None, with_default_limit=False):
+    def perform_statement(self, statement, with_default_limit=False):
         from cassandra.query import SimpleStatement
         stmt = SimpleStatement(statement, tracing_enabled=self.tracing_enabled)
         result = self.perform_simple_statement(stmt,
-                                                decoder=decoder, #todo: remove decoder
                                                 with_default_limit=with_default_limit)
         if self.tracing_enabled:
             time.sleep(0.5) # trace writes are async so we wait a little.
@@ -866,26 +844,14 @@ class Shell(cmd.Cmd):
         return result
 
 
-    def perform_simple_statement(self, statement, decoder=None, with_default_limit=False):
+    def perform_simple_statement(self, statement, with_default_limit=False):
         if not statement:
             return False
-        trynum = 1
         rows = None
         while True:
             try:
-                # todo: sort out decoder thing
                 rows = self.session.execute(statement, trace=self.tracing_enabled)
                 break
-            # todo: sort out
-            # except cql.IntegrityError, err:
-            #     self.printerr("Attempt #%d: %s" % (trynum, str(err)))
-            #     trynum += 1
-            #     if trynum > self.num_retries:
-            #         return False
-            #     time.sleep(1*trynum)
-            # except cql.ProgrammingError, err:
-            #     self.printerr(str(err))
-            #     return False
             except CQL_ERRORS, err:
                 self.printerr(str(err))
                 return False
@@ -1089,8 +1055,8 @@ class Shell(cmd.Cmd):
         and self.current_keyspace != 'system':
             print "Range ownership:"
             ring = self.get_ring()
-            for entry in ring:
-                print ' %39s  [%s]' % (entry.start_token, ', '.join(entry.endpoints))
+            for entry in ring.items():
+                print ' %39s  [%s]' % (str(entry[0].value), ', '.join([host.address for host in entry[1]]))
             print
 
     def describe_schema(self, include_system=False):
@@ -1691,14 +1657,6 @@ class Shell(cmd.Cmd):
             text = '%s:%d:%s' % (self.stdin.name, self.lineno, text)
         self.writeresult(text, color, newline=newline, out=sys.stderr)
 
-#FIXME?
-# class ErrorHandlingSchemaDecoder(cql.decoders.SchemaDecoder):
-#     def name_decode_error(self, err, namebytes, expectedtype):
-#         return DecodeError(namebytes, err, expectedtype)
-
-#    def value_decode_error(self, err, namebytes, valuebytes, expectedtype):
-#        return DecodeError(valuebytes, err, expectedtype, colname=namebytes)
-
 def option_with_default(cparser_getter, section, option, default=None):
     try:
         return cparser_getter(section, option)
@@ -1732,6 +1690,7 @@ def should_use_color():
         pass
     return True
 
+#FIXME
 def load_factory(name):
     """
     Attempts to load a transport factory function given its fully qualified
@@ -1785,6 +1744,7 @@ def read_options(cmdlineargs, environment):
     if options.file is not None:
         options.tty = False
 
+#FIXME
     options.transport_factory = load_factory(options.transport_factory)
 
     if optvalues.color in (True, False):

@@ -95,7 +95,7 @@ def format_value_default(val, colormap, **_):
 _formatters = {}
 
 def format_value(type, val, **kwargs):
-    if val == '' and not type.empty_binary_ok:
+    if not val:
         return format_value_default(val, **kwargs)
     formatter = _formatters.get(type.__name__, format_value_default)
     return formatter(val, **kwargs)
