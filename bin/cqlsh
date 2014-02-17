@@ -397,16 +397,14 @@ def full_cql_version(ver):
     vertuple = tuple(map(int, ver_parts[0].split('.')) + [ver_parts[1]])
     return ver, vertuple
 
-def format_value(val, typeclass, output_encoding, addcolor=False, time_format=None,
+def format_value(val, output_encoding, addcolor=False, time_format=None,
                  float_precision=None, colormap=None, nullval=None):
     if isinstance(val, DecodeError):
         if addcolor:
             return colorme(repr(val.thebytes), colormap, 'error')
         else:
             return FormattedValue(repr(val.thebytes))
-    if not issubclass(typeclass, CassandraType):
-        typeclass = lookup_casstype(typeclass)
-    return format_by_type(typeclass, val, output_encoding, colormap=colormap,
+    return format_by_type(type(val), val, output_encoding, colormap=colormap,
                           addcolor=addcolor, nullval=nullval, time_format=time_format,
                           float_precision=float_precision)
 
@@ -519,20 +517,20 @@ class Shell(cmd.Cmd):
     def cassandraver_atleast(self, major, minor=0, patch=0):
         return self.cass_ver_tuple[:3] >= (major, minor, patch)
 
-    def myformat_value(self, val, casstype, **kwargs):
+    def myformat_value(self, val, **kwargs):
         if isinstance(val, DecodeError):
             self.decoding_errors.append(val)
         try:
-            return format_value(val, casstype, self.output_codec.name,
+            return format_value(val, self.output_codec.name,
                                 addcolor=self.color, time_format=self.display_time_format,
                                 float_precision=self.display_float_precision, **kwargs)
         except Exception, e:
-            err = FormatError(val, e, casstype)
+            err = FormatError(val, e, type(val))
             self.decoding_errors.append(err)
-            return format_value(err, None, self.output_codec.name, addcolor=self.color)
+            return format_value(err, self.output_codec.name, addcolor=self.color)
 
-    def myformat_colname(self, name, nametype):
-        return self.myformat_value(name, nametype, colormap=COLUMN_NAME_COLORS)
+    def myformat_colname(self, name):
+        return self.myformat_value(name, colormap=COLUMN_NAME_COLORS)
 
     # cql/cursor.py:Cursor.decode_row() function, modified to not turn '' into None.
     def decode_row(self, cursor, row):
@@ -872,11 +870,11 @@ class Shell(cmd.Cmd):
         if not statement:
             return False
         trynum = 1
-        result = None
+        rows = None
         while True:
             try:
                 # todo: sort out decoder thing
-                result = self.session.execute(statement, trace=self.tracing_enabled)
+                rows = self.session.execute(statement, trace=self.tracing_enabled)
                 break
             # todo: sort out
             # except cql.IntegrityError, err:
@@ -897,33 +895,21 @@ class Shell(cmd.Cmd):
                 return False
 
         if statement.query_string[:6].lower() == 'select' or statement.query_string.lower().startswith("list"):
-            self.print_result(result, with_default_limit)
-        elif not result:
+            self.print_result(rows, with_default_limit)
+        elif rows:
             # CAS INSERT/UPDATE
             self.writeresult("")
-            #fixme
-            #self.print_static_result(self.session)
+            self.print_static_result(rows)
         self.flush_output()
         return True
 
-    def get_nametype(self, cursor, num):
-        """
-        Determine the Cassandra type of a column name from the current row of
-        query results on the given cursor. The column in question is given by
-        its zero-based ordinal number within the row.
-
-        This is necessary to differentiate some things like ascii vs. blob hex.
-        """
-
-        return cursor.name_info[num][1]
-
-    def print_result(self, cursor, with_default_limit):
+    def print_result(self, rows, with_default_limit):
         self.decoding_errors = []
 
         self.writeresult("")
-        if cursor :
-            self.print_static_result(cursor)
-        self.writeresult("(%d rows)" % len(cursor))
+        if rows :
+            self.print_static_result(rows)
+        self.writeresult("(%d rows)" % len(rows))
         self.writeresult("")
 
         if self.decoding_errors:
@@ -934,18 +920,19 @@ class Shell(cmd.Cmd):
                                  % (len(self.decoding_errors) - 2), color=RED)
 
         if with_default_limit:
-            if len(cursor) == DEFAULT_SELECT_LIMIT:
+            if len(rows) == DEFAULT_SELECT_LIMIT:
                 self.writeresult("Default LIMIT of %d was used. "
                                  "Specify your own LIMIT clause to get more results."
                                  % DEFAULT_SELECT_LIMIT, color=RED)
                 self.writeresult("")
 
 
-    def print_static_result(self, cursor):
-        colnames = [d[0] for d in cursor.description]
-        colnames_t = [(name, self.get_nametype(cursor, n)) for (n, name) in enumerate(colnames)]
-        formatted_names = [self.myformat_colname(name, nametype) for (name, nametype) in colnames_t]
-        formatted_values = [map(self.myformat_value, self.decode_row(cursor, row), cursor.column_types) for row in cursor.result]
+    def print_static_result(self, rows):
+        if not rows:
+            return
+        colnames = rows[0]._fields
+        formatted_names = [self.myformat_colname(name) for name in colnames]
+        formatted_values = [map(self.myformat_value, row) for row in rows]
         if self.expand_enabled:
             self.print_formatted_result_vertically(formatted_names, formatted_values)
         else:
@@ -1704,12 +1691,13 @@ class Shell(cmd.Cmd):
             text = '%s:%d:%s' % (self.stdin.name, self.lineno, text)
         self.writeresult(text, color, newline=newline, out=sys.stderr)
 
+#FIXME?
 # class ErrorHandlingSchemaDecoder(cql.decoders.SchemaDecoder):
 #     def name_decode_error(self, err, namebytes, expectedtype):
 #         return DecodeError(namebytes, err, expectedtype)
 
-    def value_decode_error(self, err, namebytes, valuebytes, expectedtype):
-        return DecodeError(valuebytes, err, expectedtype, colname=namebytes)
+#    def value_decode_error(self, err, namebytes, valuebytes, expectedtype):
+#        return DecodeError(valuebytes, err, expectedtype, colname=namebytes)
 
 def option_with_default(cparser_getter, section, option, default=None):
     try:

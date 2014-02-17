@@ -27,10 +27,9 @@ def print_trace_session(shell, session, session_id):
         shell.printerr("Session %s wasn't found." % session_id)
         return
     names = ['activity', 'timestamp', 'source', 'source_elapsed']
-    types = [UTF8Type, UTF8Type, InetAddressType, Int32Type]
 
-    formatted_names = [shell.myformat_colname(name, UTF8Type) for name in names]
-    formatted_values = [map(shell.myformat_value, row, types) for row in rows]
+    formatted_names = [shell.myformat_colname(name) for name in names]
+    formatted_values = [map(shell.myformat_value, row) for row in rows]
 
     shell.writeresult('')
     shell.writeresult('Tracing session: ', color=MAGENTA, newline=False)
