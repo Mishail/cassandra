@@ -16,6 +16,7 @@
 
 from cassandra.marshal import uint16_unpack
 from cassandra.cqltypes import CompositeType
+import collections
 from formatting import formatter_for, format_value_utype
 
 
@@ -46,18 +47,19 @@ class UserType(CompositeType):
     @classmethod
     def deserialize_safe(cls, byts):
         p = 0
+        Result = collections.namedtuple(cls.typename, cls.fieldnames)
         result = []
-        for col_name, col_type in zip(cls.fieldnames, cls.subtypes):
+        for col_type in cls.subtypes:
             if p == len(byts):
                 break
             itemlen = uint16_unpack(byts[p:p + 2])
             p += 2
             item = byts[p:p + itemlen]
             p += itemlen
-            result.append((str(col_name), col_type.from_binary(item)))
+            result.append(col_type.from_binary(item))
             p += 1
 
-        return result
+        return Result(*result) #FIXME the case when new fields were added
 
 
 
