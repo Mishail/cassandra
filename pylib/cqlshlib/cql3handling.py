@@ -15,10 +15,7 @@
 # limitations under the License.
 
 import re
-from warnings import warn
 from .cqlhandling import CqlParsingRuleSet, Hint
-from cassandra.cqltypes import (lookup_casstype, CompositeType, UTF8Type,
-                          ColumnToCollectionType, CounterColumnType, DateType)
 from . import helptopics
 
 simple_cql_types = set() #FIXME: add all types
@@ -30,10 +27,6 @@ try:
     import json
 except ImportError:
     import simplejson as json
-
-# temporarily have this here until a newer cassandra-dbapi2 is bundled with C*
-class TimestampType(DateType):
-    pass
 
 class UnexpectedTableStructure(UserWarning):
     def __init__(self, msg):
@@ -537,7 +530,7 @@ def unreserved_keyword_completer(ctxt, cass):
     # names, CF names, property values, etc.
     return ()
 
-def get_cf_layout(ctxt, cass):
+def get_table_meta(ctxt, cass):
     ks = ctxt.get_binding('ksname', None)
     if ks is not None:
         ks = dequote_name(ks)
@@ -587,7 +580,7 @@ def select_order_column_completer(ctxt, cass):
         keyname = ctxt.get_binding('rel_lhs', ())
         if not keyname:
             return [Hint("Can't ORDER BY here: need to specify partition key in WHERE clause")]
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     order_by_candidates = layout.clustering_key_columns[:]
     if len(order_by_candidates) > len(prev_order_cols):
         return [maybe_escape_name(order_by_candidates[len(prev_order_cols)])]
@@ -599,12 +592,12 @@ def relation_token_word_completer(ctxt, cass):
 
 @completer_for('relation', 'rel_tokname')
 def relation_token_subject_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     return [layout.partition_key_columns[0]]
 
 @completer_for('relation', 'rel_lhs')
 def select_relation_lhs_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     filterable = set((layout.partition_key_columns[0], layout.clustering_key_columns[0]))
     already_filtered_on = map(dequote_name, ctxt.get_binding('rel_lhs'))
     for num in range(1, len(layout.partition_key_columns)):
@@ -644,7 +637,7 @@ syntax_rules += r'''
 
 @completer_for('insertStatement', 'colname')
 def insert_colname_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     colnames = set(map(dequote_name, ctxt.get_binding('colname', ())))
     keycols = layout.primary_key_columns
     for k in keycols:
@@ -655,7 +648,7 @@ def insert_colname_completer(ctxt, cass):
 
 @completer_for('insertStatement', 'newval')
 def insert_newval_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     insertcols = map(dequote_name, ctxt.get_binding('colname'))
     valuesdone = ctxt.get_binding('newval', ())
     if len(valuesdone) >= len(insertcols):
@@ -674,7 +667,7 @@ def insert_newval_completer(ctxt, cass):
 
 @completer_for('insertStatement', 'valcomma')
 def insert_valcomma_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     numcols = len(ctxt.get_binding('colname', ()))
     numvals = len(ctxt.get_binding('newval', ()))
     if numcols > numvals:
@@ -712,12 +705,12 @@ def insert_option_completer(ctxt, cass):
 
 @completer_for('assignment', 'updatecol')
 def update_col_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     return map(maybe_escape_name, layout.regular_columns)
 
 @completer_for('assignment', 'update_rhs')
 def update_countername_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
     cqltype = layout.get_column(curcol).cqltype
     coltype = cqltype.typename
@@ -731,13 +724,13 @@ def update_countername_completer(ctxt, cass):
 
 @completer_for('assignment', 'counterop')
 def update_counterop_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
     return ['+', '-'] if layout.is_counter_col(curcol) else []
 
 @completer_for('assignment', 'inc')
 def update_counter_inc_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
     if layout.is_counter_col(curcol):
         return Hint('<wholenumber>')
@@ -759,7 +752,7 @@ def update_listcol_completer(ctxt, cass):
 
 @completer_for('assignment', 'indexbracket')
 def update_indexbracket_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
     coltype = layout.get_column(curcol).cqltype.typename
     if coltype in ('map', 'list'):
@@ -787,7 +780,7 @@ def delete_opt_completer(ctxt, cass):
 
 @completer_for('deleteSelector', 'delcol')
 def delete_delcol_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     return map(maybe_escape_name, layout.regular_columns) #FIXME
 
 syntax_rules += r'''
@@ -934,7 +927,7 @@ explain_completion('createIndexStatement', 'indexname', '<new_index_name>')
 
 @completer_for('createIndexStatement', 'col')
 def create_index_col_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     colnames = [cd.name for cd in layout.columns.values() if not cd.index]
     return map(maybe_escape_name, colnames)
 
@@ -968,7 +961,7 @@ syntax_rules += r'''
 
 @completer_for('alterInstructions', 'existcol')
 def alter_table_col_completer(ctxt, cass):
-    layout = get_cf_layout(ctxt, cass)
+    layout = get_table_meta(ctxt, cass)
     cols = [str(md) for md in layout.columns]
     return map(maybe_escape_name, cols)
 
@@ -1051,120 +1044,3 @@ def username_name_completer(ctxt, cass):
 # END SYNTAX/COMPLETION RULE DEFINITIONS
 
 CqlRuleSet.append_rules(syntax_rules)
-
-class CqlColumnDef:
-    index_name = None
-    index_type = None
-    component_type = 'regular'
-    component_index = None
-    index_options = {}
-
-    def __init__(self, name, cqltype):
-        self.name = name
-        self.cqltype = cqltype
-        assert name is not None
-
-    @classmethod
-    def from_layout(cls, layout):
-        c = cls(layout[u'column_name'], lookup_casstype(layout[u'validator']))
-        c.component_type = layout[u'type']
-        idx = layout[u'component_index'] # can be None
-        if idx:
-            c.component_index = int(idx)
-        c.index_name = layout[u'index_name']
-        c.index_type = layout[u'index_type']
-        if c.index_type == 'CUSTOM':
-            c.index_options = json.loads(layout[u'index_options'])
-        return c
-
-    def __str__(self):
-        indexstr = ' (index %s)' % self.index_name if self.index_name is not None else ''
-        return '<CqlColumnDef %r %r%s>' % (self.name, self.cqltype, indexstr)
-    __repr__ = __str__
-
-class CqlTableDef:
-    """Names of all columns which are grouped into the partition key"""
-    partition_key_columns = ()
-
-    """Names of all columns which are part of the primary key, but not grouped
-       into the partition key"""
-    clustering_key_columns = ()
-
-    """Names of all columns which are part of the primary key, whether or not
-       they are grouped into the partition key"""
-    primary_key_columns = ()
-
-    """Names of all columns which aren't part of the primary key"""
-    regular_columns = ()
-
-    """CqlColumnDef objects for all columns. Use .get_column() to access one
-       by name."""
-    columns = ()
-
-    def __init__(self, name):
-        self.name = name
-
-    @classmethod
-    def from_layout(cls, layout, coldefs):
-        """
-        This constructor accepts a dictionary of column-value pairs from a row
-        of system.schema_columnfamilies, and a sequence of similar dictionaries
-        from corresponding rows in system.schema_columns.
-        """
-        cf = cls(name=layout[u'columnfamily_name'])
-        cf.keyspace = layout[u'keyspace_name']
-        for attr, val in layout.items():
-            setattr(cf, attr.encode('ascii'), val)
-        cf.comparator = lookup_casstype(cf.comparator)
-        for attr in ('compaction_strategy_options', 'compression_parameters'):
-            setattr(cf, attr, json.loads(getattr(cf, attr)))
-
-        # deal with columns, filter out empty column names (see CASSANDRA-6139)
-        columns = filter(lambda c: c.name, map(CqlColumnDef.from_layout, coldefs))
-
-        partition_key_cols = filter(lambda c: c.component_type == u'partition_key', columns)
-        partition_key_cols.sort(key=lambda c: c.component_index)
-        cf.partition_key_columns = map(lambda c: c.name, partition_key_cols)
-
-        clustering_key_cols = filter(lambda c: c.component_type == u'clustering_key', columns)
-        clustering_key_cols.sort(key=lambda c: c.component_index)
-        cf.clustering_key_columns = map(lambda c: c.name, clustering_key_cols)
-
-        cf.primary_key_columns = cf.partition_key_columns + cf.clustering_key_columns
-
-        regular_cols = list(set(columns) - set(partition_key_cols) - set(clustering_key_cols))
-        regular_cols.sort(key=lambda c: c.name)
-        cf.regular_columns = map(lambda c: c.name, regular_cols)
-
-        cf.columns = partition_key_cols + clustering_key_cols + regular_cols
-        return cf
-
-    # not perfect, but good enough; please read CFDefinition constructor comments
-    # returns False if we are dealing with a CQL3 table, True otherwise.
-    # 'compact' here means 'needs WITH COMPACT STORAGE option for CREATE TABLE in CQL3'.
-    def is_compact_storage(self):
-        if not issubclass(self.comparator, CompositeType):
-            return True
-        for subtype in self.comparator.subtypes:
-            if issubclass(subtype, ColumnToCollectionType):
-                return False
-        if len(self.clustering_key_columns) == len(self.comparator.subtypes) - 1:
-            if self.comparator.subtypes[-1] is UTF8Type:
-                return False
-        return True
-
-    def is_counter_col(self, colname):
-        try:
-            return bool(self.get_column(colname).cqltype is CounterColumnType)
-        except KeyError:
-            return False
-
-    def get_column(self, colname):
-        col_info = [cm for cm in self.columns if cm.name == colname]
-        if not col_info:
-            raise KeyError("column %r not found" % (colname,))
-        return col_info[0]
-
-    def __str__(self):
-        return '<%s %s.%s>' % (self.__class__.__name__, self.keyspace, self.name)
-    __repr__ = __str__
