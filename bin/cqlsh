@@ -1553,6 +1553,7 @@ class Shell(cmd.Cmd):
         Exits cqlsh.
         """
         self.stop = True
+        self.conn.shutdown()
     do_quit = do_exit
 
     def do_debug(self, parsed):
