@@ -196,9 +196,9 @@ def format_value_text(val, encoding, colormap, quote=False, **_):
 # name alias
 formatter_for('unicode')(format_value_text)
 
-def format_simple_collection(subtype, val, lbracket, rbracket, encoding,
+def format_simple_collection(val, lbracket, rbracket, encoding,
                              colormap, time_format, float_precision, nullval):
-    subs = [format_value(subtype, sval, encoding=encoding, colormap=colormap,
+    subs = [format_value(type(sval), sval, encoding=encoding, colormap=colormap,
                          time_format=time_format, float_precision=float_precision,
                          nullval=nullval, quote=True)
             for sval in val]
@@ -210,25 +210,27 @@ def format_simple_collection(subtype, val, lbracket, rbracket, encoding,
     return FormattedValue(bval, coloredval, displaywidth)
 
 @formatter_for('list')
-def format_value_list(val, encoding, colormap, time_format, float_precision, subtypes, nullval, **_):
-    return format_simple_collection(subtypes[0], val, '[', ']', encoding, colormap,
+def format_value_list(val, encoding, colormap, time_format, float_precision, nullval, **_):
+    return format_simple_collection(val, '[', ']', encoding, colormap,
                                     time_format, float_precision, nullval)
+formatter_for('tuple')(format_value_list)
 
 @formatter_for('set')
-def format_value_set(val, encoding, colormap, time_format, float_precision, subtypes, nullval, **_):
-    return format_simple_collection(subtypes[0], sorted(val), '{', '}', encoding, colormap,
+def format_value_set(val, encoding, colormap, time_format, float_precision, nullval, **_):
+    return format_simple_collection(sorted(val), '{', '}', encoding, colormap,
                                     time_format, float_precision, nullval)
+formatter_for('frozenset')(format_value_set)
+formatter_for('sortedset')(format_value_set)
+
 
 @formatter_for('dict')
-# TODO other types?
-def format_value_map(val, encoding, colormap, time_format, float_precision, subtypes, nullval, **_):
-    def subformat(v, subtype):
-        return format_value(subtype, v, encoding=encoding, colormap=colormap,
+def format_value_map(val, encoding, colormap, time_format, float_precision, nullval, **_):
+    def subformat(v):
+        return format_value(type(v), v, encoding=encoding, colormap=colormap,
                             time_format=time_format, float_precision=float_precision,
                             nullval=nullval, quote=True)
 
-    subkeytype, subvaltype = subtypes
-    subs = [(subformat(k, subkeytype), subformat(v, subvaltype)) for (k, v) in sorted(val.items())]
+    subs = [(subformat(k), subformat(v)) for (k, v) in sorted(val.items())]
     bval = '{' + ', '.join(k.strval + ': ' + v.strval for (k, v) in subs) + '}'
     lb, comma, colon, rb = [colormap['collection'] + s + colormap['reset']
                             for s in ('{', ', ', ': ', '}')]
@@ -237,3 +239,5 @@ def format_value_map(val, encoding, colormap, time_format, float_precision, subt
                + rb
     displaywidth = 4 * len(subs) + sum(k.displaywidth + v.displaywidth for (k, v) in subs)
     return FormattedValue(bval, coloredval, displaywidth)
+
+formatter_for('OrderedDict')(format_value_map)

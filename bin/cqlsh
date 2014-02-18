@@ -564,7 +564,7 @@ class Shell(cmd.Cmd):
         if ksname is None:
             ksname = self.current_keyspace
 
-        return map(str, self.conn.metadata.keyspaces[ksname].tables.keys())
+        return map(str, self.get_keyspace(ksname).tables.keys())
 
     def get_index_names(self, ksname=None):
         idxnames = []
@@ -967,7 +967,7 @@ class Shell(cmd.Cmd):
 
         Writes output to the given out stream.
         """
-        out.write(self.conn.metadata.keyspaces[ksname].tables[cfname].export_as_string())
+        out.write(self.get_columnfamily_layout(ksname, cfname).export_as_string())
         out.write("\n")
 
     def describe_keyspaces(self):
