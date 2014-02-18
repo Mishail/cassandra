@@ -58,11 +58,13 @@ public class SSTableWriter extends SSTable
     private DecoratedKey lastWrittenKey;
     private FileMark dataMark;
     private final MetadataCollector sstableMetadataCollector;
+    private final long repairedAt;
 
-    public SSTableWriter(String filename, long keyCount)
+    public SSTableWriter(String filename, long keyCount, long repairedAt)
     {
         this(filename,
              keyCount,
+             repairedAt,
              Schema.instance.getCFMetaData(Descriptor.fromFilename(filename)),
              StorageService.getPartitioner(),
              new MetadataCollector(Schema.instance.getCFMetaData(Descriptor.fromFilename(filename)).comparator));
@@ -95,6 +97,7 @@ public class SSTableWriter extends SSTable
 
     public SSTableWriter(String filename,
                          long keyCount,
+                         long repairedAt,
                          CFMetaData metadata,
                          IPartitioner<?> partitioner,
                          MetadataCollector sstableMetadataCollector)
@@ -103,6 +106,7 @@ public class SSTableWriter extends SSTable
               components(metadata),
               metadata,
               partitioner);
+        this.repairedAt = repairedAt;
         iwriter = new IndexWriter(keyCount);
 
         if (compression)
@@ -240,6 +244,16 @@ public class SSTableWriter extends SSTable
         if (version.hasRowSizeAndColumnCount)
             columnCount = in.readInt();
 
+        if (cf.deletionInfo().getTopLevelDeletion().localDeletionTime < Integer.MAX_VALUE)
+            tombstones.update(cf.deletionInfo().getTopLevelDeletion().localDeletionTime);
+
+        Iterator<RangeTombstone> rangeTombstoneIterator = cf.deletionInfo().rangeIterator();
+        while (rangeTombstoneIterator.hasNext())
+        {
+            RangeTombstone rangeTombstone = rangeTombstoneIterator.next();
+            tombstones.update(rangeTombstone.getLocalDeletionTime());
+        }
+
         Iterator<OnDiskAtom> iter = metadata.getOnDiskIterator(in, columnCount, ColumnSerializer.Flag.PRESERVE_SIZE, Integer.MIN_VALUE, version);
         try
         {
@@ -352,7 +366,8 @@ public class SSTableWriter extends SSTable
         // write sstable statistics
         Map<MetadataType, MetadataComponent> metadataComponents = sstableMetadataCollector.finalizeMetadata(
                                                                                     partitioner.getClass().getCanonicalName(),
-                                                                                    metadata.getBloomFilterFpChance());
+                                                                                    metadata.getBloomFilterFpChance(),
+                                                                                    repairedAt);
         writeMetadata(descriptor, metadataComponents);
 
         // save the table of components
@@ -426,7 +441,7 @@ public class SSTableWriter extends SSTable
             indexFile = SequentialWriter.open(new File(descriptor.filenameFor(Component.PRIMARY_INDEX)),
                                               !metadata.populateIoCacheOnFlush());
             builder = SegmentedFile.getBuilder(DatabaseDescriptor.getIndexAccessMode());
-            summary = new IndexSummaryBuilder(keyCount, metadata.getIndexInterval(), Downsampling.BASE_SAMPLING_LEVEL);
+            summary = new IndexSummaryBuilder(keyCount, metadata.getMinIndexInterval(), Downsampling.BASE_SAMPLING_LEVEL);
             bf = FilterFactory.getFilter(keyCount, metadata.getBloomFilterFpChance(), true);
         }
 

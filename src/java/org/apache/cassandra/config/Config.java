@@ -17,8 +17,18 @@
  */
 package org.apache.cassandra.config;
 
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.List;
+import java.util.Set;
+
+import com.google.common.collect.Sets;
+import org.supercsv.io.CsvListReader;
+import org.supercsv.prefs.CsvPreference;
+
 import org.apache.cassandra.config.EncryptionOptions.ClientEncryptionOptions;
 import org.apache.cassandra.config.EncryptionOptions.ServerEncryptionOptions;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.io.util.NativeAllocator;
 import org.apache.cassandra.utils.FBUtilities;
 
@@ -38,7 +48,9 @@ public class Config
     public String partitioner;
 
     public Boolean auto_bootstrap = true;
-    public volatile Boolean hinted_handoff_enabled = true;
+    public volatile boolean hinted_handoff_enabled_global = true;
+    public String hinted_handoff_enabled;
+    public Set<String> hinted_handoff_enabled_by_dc = Sets.newConcurrentHashSet();
     public volatile Integer max_hint_window_in_ms = 3600 * 1000; // one hour
 
     public SeedProviderDef seed_provider;
@@ -77,7 +89,10 @@ public class Config
     @Deprecated
     public Integer concurrent_replicates = null;
 
-    public Integer memtable_flush_writers = null; // will get set to the length of data dirs in DatabaseDescriptor
+    // we don't want a lot of contention, but we also don't want to starve all other tables
+    // if a big one flushes. OS buffering should be able to minimize contention with 2 threads.
+    public int memtable_flush_writers = 2;
+
     public Integer memtable_total_space_in_mb;
     public float memtable_cleanup_threshold = 0.4f;
 
@@ -121,8 +136,10 @@ public class Config
     public Integer max_streaming_retries = 3;
 
     public volatile Integer stream_throughput_outbound_megabits_per_sec = 200;
+    public volatile Integer inter_dc_stream_throughput_outbound_megabits_per_sec = 0;
 
     public String[] data_file_directories;
+    public String flush_directory;
 
     public String saved_caches_directory;
 
@@ -197,6 +214,9 @@ public class Config
     public volatile Long index_summary_capacity_in_mb;
     public volatile int index_summary_resize_interval_in_minutes = 60;
 
+    private static final CsvPreference STANDARD_SURROUNDING_SPACES_NEED_QUOTES = new CsvPreference.Builder(CsvPreference.STANDARD_PREFERENCE)
+                                                                                                  .surroundingSpacesNeedQuotes(true).build();
+
     public static boolean getOutboundBindAny()
     {
         return outboundBindAny;
@@ -215,6 +235,38 @@ public class Config
     public static void setClientMode(boolean clientMode)
     {
         isClientMode = clientMode;
+    }
+
+    public void configHintedHandoff() throws ConfigurationException
+    {
+        if (hinted_handoff_enabled != null && !hinted_handoff_enabled.isEmpty())
+        {
+            if (hinted_handoff_enabled.toLowerCase().equalsIgnoreCase("true"))
+            {
+                hinted_handoff_enabled_global = true;
+            }
+            else if (hinted_handoff_enabled.toLowerCase().equalsIgnoreCase("false"))
+            {
+                hinted_handoff_enabled_global = false;
+            }
+            else
+            {
+                try
+                {
+                    hinted_handoff_enabled_by_dc.addAll(parseHintedHandoffEnabledDCs(hinted_handoff_enabled));
+                }
+                catch (IOException e)
+                {
+                    throw new ConfigurationException("Invalid hinted_handoff_enabled parameter " + hinted_handoff_enabled, e);
+                }
+            }
+        }
+    }
+
+    public static List<String> parseHintedHandoffEnabledDCs(final String dcNames) throws IOException
+    {
+        final CsvListReader csvListReader = new CsvListReader(new StringReader(dcNames), STANDARD_SURROUNDING_SPACES_NEED_QUOTES);
+        return csvListReader.read();
     }
 
     public static enum CommitLogSync

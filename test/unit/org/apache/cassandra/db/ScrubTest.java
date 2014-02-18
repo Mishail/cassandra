@@ -38,7 +38,6 @@ import org.apache.cassandra.Util;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.compaction.Scrubber;
-import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.db.columniterator.IdentityQueryFilter;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
@@ -59,7 +58,7 @@ public class ScrubTest extends SchemaLoader
     public String COUNTER_CF = "Counter1";
 
     @Test
-    public void testScrubOneRow() throws IOException, ExecutionException, InterruptedException, ConfigurationException
+    public void testScrubOneRow() throws ExecutionException, InterruptedException
     {
         CompactionManager.instance.disableAutoCompaction();
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -81,7 +80,7 @@ public class ScrubTest extends SchemaLoader
     }
 
     @Test
-    public void testScrubCorruptedCounterRow() throws IOException, InterruptedException, ExecutionException, WriteTimeoutException
+    public void testScrubCorruptedCounterRow() throws IOException, WriteTimeoutException
     {
         CompactionManager.instance.disableAutoCompaction();
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -128,14 +127,14 @@ public class ScrubTest extends SchemaLoader
     }
 
     @Test
-    public void testScrubDeletedRow() throws IOException, ExecutionException, InterruptedException, ConfigurationException
+    public void testScrubDeletedRow() throws ExecutionException, InterruptedException
     {
         CompactionManager.instance.disableAutoCompaction();
         Keyspace keyspace = Keyspace.open(KEYSPACE);
         ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CF3);
         cfs.clearUnsafe();
 
-        ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(KEYSPACE, CF3);
+        ColumnFamily cf = ArrayBackedSortedColumns.factory.create(KEYSPACE, CF3);
         cf.delete(new DeletionInfo(0, 1)); // expired tombstone
         Mutation rm = new Mutation(KEYSPACE, ByteBufferUtil.bytes(1), cf);
         rm.applyUnsafe();
@@ -146,7 +145,7 @@ public class ScrubTest extends SchemaLoader
     }
 
     @Test
-    public void testScrubMultiRow() throws IOException, ExecutionException, InterruptedException, ConfigurationException
+    public void testScrubMultiRow() throws ExecutionException, InterruptedException
     {
         CompactionManager.instance.disableAutoCompaction();
         Keyspace keyspace = Keyspace.open(KEYSPACE);
@@ -243,13 +242,13 @@ public class ScrubTest extends SchemaLoader
         return true;
     }
 
-    protected void fillCF(ColumnFamilyStore cfs, int rowsPerSSTable) throws ExecutionException, InterruptedException, IOException
+    protected void fillCF(ColumnFamilyStore cfs, int rowsPerSSTable)
     {
         for (int i = 0; i < rowsPerSSTable; i++)
         {
             String key = String.valueOf(i);
             // create a row and update the birthdate value, test that the index query fetches the new version
-            ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(KEYSPACE, CF);
+            ColumnFamily cf = ArrayBackedSortedColumns.factory.create(KEYSPACE, CF);
             cf.addColumn(column("c1", "1", 1L));
             cf.addColumn(column("c2", "2", 1L));
             Mutation rm = new Mutation(KEYSPACE, ByteBufferUtil.bytes(key), cf);
@@ -259,12 +258,12 @@ public class ScrubTest extends SchemaLoader
         cfs.forceBlockingFlush();
     }
 
-    protected void fillCounterCF(ColumnFamilyStore cfs, int rowsPerSSTable) throws ExecutionException, InterruptedException, IOException, WriteTimeoutException
+    protected void fillCounterCF(ColumnFamilyStore cfs, int rowsPerSSTable) throws WriteTimeoutException
     {
         for (int i = 0; i < rowsPerSSTable; i++)
         {
             String key = String.valueOf(i);
-            ColumnFamily cf = TreeMapBackedSortedColumns.factory.create(KEYSPACE, COUNTER_CF);
+            ColumnFamily cf = ArrayBackedSortedColumns.factory.create(KEYSPACE, COUNTER_CF);
             Mutation rm = new Mutation(KEYSPACE, ByteBufferUtil.bytes(key), cf);
             rm.addCounter(COUNTER_CF, cellname("Column1"), 100);
             CounterMutation cm = new CounterMutation(rm, ConsistencyLevel.ONE);

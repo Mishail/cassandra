@@ -25,10 +25,15 @@ New features
      Note that existing directories are used as is, so only newly created
      directories after upgrade have new directory name format.
    - Saved key cache files also have ColumnFamily ID in their file name.
+   - It is now possible to do incremental repairs, sstables that have been
+     repaired are marked with a timestamp and not included in the next
+     repair session. Use nodetool repair -par -inc to use this feature.
+     A tool to manually mark/unmark sstables as repaired is available in
+     tools/bin/sstablerepairedset.
 
 Upgrading
 ---------
-   - Rolling upgrades from anything pre-2.0.5 is not supported.
+   - Rolling upgrades from anything pre-2.0.6 is not supported.
    - For leveled compaction users, 2.0 must be atleast started before
      upgrading to 2.1 due to the fact that the old JSON leveled
      manifest is migrated into the sstable metadata files on startup
@@ -43,6 +48,10 @@ Upgrading
      to change your data model to accomodate the new implementation.
      (See https://issues.apache.org/jira/browse/CASSANDRA-6504 and the dev
      blog post at http://www.datastax.com/dev/blog/<PLACEHOLDER> for details).
+    - (per-table) index_interval parameter has been replaced with
+     min_index_interval and max_index_interval paratemeters. index_interval
+     has been deprecated.
+
 
 2.0.5
 =====

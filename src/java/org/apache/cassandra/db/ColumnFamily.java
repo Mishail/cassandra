@@ -28,12 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import com.google.common.base.Function;
-import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableMap;
-
-import org.apache.cassandra.utils.memory.AbstractAllocator;
-import org.apache.cassandra.utils.memory.HeapAllocator;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
 import org.apache.cassandra.cache.IRowCacheEntry;
@@ -42,6 +37,7 @@ import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.CellNameType;
 import org.apache.cassandra.db.composites.CellNames;
+import org.apache.cassandra.db.filter.ColumnCounter;
 import org.apache.cassandra.db.filter.ColumnSlice;
 import org.apache.cassandra.io.sstable.ColumnNameHelper;
 import org.apache.cassandra.io.sstable.ColumnStats;
@@ -87,6 +83,14 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
         return metadata.cfType;
     }
 
+    public int liveCQL3RowCount(long now)
+    {
+        ColumnCounter counter = getComparator().isDense()
+                              ? new ColumnCounter(now)
+                              : new ColumnCounter.GroupByPrefix(now, getComparator(), metadata.clusteringColumns().size());
+        return counter.countAll(this).live();
+    }
+
     /**
      * Clones the column map.
      */
@@ -114,11 +118,6 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
         {
             addColumn(cell);
         }
-    }
-
-    public void addColumn(Cell cell)
-    {
-        addColumn(cell, HeapAllocator.instance);
     }
 
     public void addColumn(CellName name, ByteBuffer value, long timestamp)
@@ -201,7 +200,7 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
      * If a cell with the same name is already present in the map, it will
      * be replaced by the newly added cell.
      */
-    public abstract void addColumn(Cell cell, AbstractAllocator allocator);
+    public abstract void addColumn(Cell cell);
 
     /**
      * Adds all the columns of a given column map to this column map.
@@ -212,14 +211,7 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
      *   </code>
      *  but is potentially faster.
      */
-    public abstract void addAll(ColumnFamily cm, AbstractAllocator allocator, Function<Cell, Cell> transformation);
-
-    /**
-     * Replace oldCell if present by newCell.
-     * Returns true if oldCell was present and thus replaced.
-     * oldCell and newCell should have the same name.
-     */
-    public abstract boolean replace(Cell oldCell, Cell newCell);
+    public abstract void addAll(ColumnFamily cm);
 
     /**
      * Get a column given its name, returning null if the column is not
@@ -285,11 +277,6 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
         delete(columns.deletionInfo());
     }
 
-    public void addAll(ColumnFamily cf, AbstractAllocator allocator)
-    {
-        addAll(cf, allocator, Functions.<Cell>identity());
-    }
-
     /*
      * This function will calculate the difference between 2 column families.
      * The external input is assumed to be a superset of internal.
@@ -297,7 +284,7 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
     public ColumnFamily diff(ColumnFamily cfComposite)
     {
         assert cfComposite.id().equals(id());
-        ColumnFamily cfDiff = TreeMapBackedSortedColumns.factory.create(metadata);
+        ColumnFamily cfDiff = ArrayBackedSortedColumns.factory.create(metadata);
         cfDiff.delete(cfComposite.deletionInfo());
 
         // (don't need to worry about cfNew containing Columns that are shadowed by
@@ -372,7 +359,7 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
     public String toString()
     {
         StringBuilder sb = new StringBuilder("ColumnFamily(");
-        sb.append(metadata == null ? "<anonymous>" : metadata.cfName);
+        sb.append(metadata.cfName);
 
         if (isMarkedForDelete())
             sb.append(" -").append(deletionInfo()).append("-");
@@ -402,19 +389,6 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
         return cf1.diff(cf2);
     }
 
-    public void resolve(ColumnFamily cf)
-    {
-        resolve(cf, HeapAllocator.instance);
-    }
-
-    public void resolve(ColumnFamily cf, AbstractAllocator allocator)
-    {
-        // Row _does_ allow null CF objects :(  seems a necessary evil for efficiency
-        if (cf == null)
-            return;
-        addAll(cf, allocator);
-    }
-
     public ColumnStats getColumnStats()
     {
         long minTimestampSeen = deletionInfo().isLive() ? Long.MAX_VALUE : deletionInfo().minTimestamp();
@@ -425,6 +399,14 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
         List<ByteBuffer> maxColumnNamesSeen = Collections.emptyList();
         for (Cell cell : this)
         {
+            if (deletionInfo().getTopLevelDeletion().localDeletionTime < Integer.MAX_VALUE)
+                tombstones.update(deletionInfo().getTopLevelDeletion().localDeletionTime);
+            Iterator<RangeTombstone> it = deletionInfo().rangeIterator();
+            while (it.hasNext())
+            {
+                RangeTombstone rangeTombstone = it.next();
+                tombstones.update(rangeTombstone.getLocalDeletionTime());
+            }
             minTimestampSeen = Math.min(minTimestampSeen, cell.minTimestamp());
             maxTimestampSeen = Math.max(maxTimestampSeen, cell.maxTimestamp());
             maxLocalDeletionTime = Math.max(maxLocalDeletionTime, cell.getLocalDeletionTime());
@@ -466,21 +448,6 @@ public abstract class ColumnFamily implements Iterable<Cell>, IRowCacheEntry
     public Iterator<Cell> reverseIterator()
     {
         return getReverseSortedColumns().iterator();
-    }
-
-    public boolean hasIrrelevantData(int gcBefore)
-    {
-        // Do we have gcable deletion infos?
-        if (deletionInfo().hasPurgeableTombstones(gcBefore))
-            return true;
-
-        // Do we have colums that are either deleted by the container or gcable tombstone?
-        DeletionInfo.InOrderTester tester = inOrderDeletionTester();
-        for (Cell cell : this)
-            if (tester.isDeleted(cell) || cell.hasIrrelevantData(gcBefore))
-                return true;
-
-        return false;
     }
 
     public Map<CellName, ByteBuffer> asMap()

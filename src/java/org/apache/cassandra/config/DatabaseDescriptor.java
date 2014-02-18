@@ -19,6 +19,7 @@ package org.apache.cassandra.config;
 
 import java.io.File;
 import java.io.FileFilter;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.*;
@@ -264,15 +265,8 @@ public class DatabaseDescriptor
             throw new ConfigurationException("memtable_heap_space_in_mb must be positive");
         logger.info("Global memtable heap threshold is enabled at {}MB", conf.memtable_total_space_in_mb);
 
-        /* Memtable flush writer threads */
-        if (conf.memtable_flush_writers != null && conf.memtable_flush_writers < 1)
-        {
+        if (conf.memtable_flush_writers < 1)
             throw new ConfigurationException("memtable_flush_writers must be at least 1");
-        }
-        else if (conf.memtable_flush_writers == null)
-        {
-            conf.memtable_flush_writers = conf.data_file_directories.length;
-        }
 
         /* Local IP or hostname to bind services to */
         if (conf.listen_address != null)
@@ -404,6 +398,9 @@ public class DatabaseDescriptor
         /* data file and commit log directories. they get created later, when they're needed. */
         if (conf.commitlog_directory != null && conf.data_file_directories != null && conf.saved_caches_directory != null)
         {
+            if (conf.flush_directory == null)
+                conf.flush_directory = conf.data_file_directories[0];
+
             for (String datadir : conf.data_file_directories)
             {
                 if (datadir.equals(conf.commitlog_directory))
@@ -613,6 +610,8 @@ public class DatabaseDescriptor
                 throw new ConfigurationException("saved_caches_directory must be specified");
 
             FileUtils.createDirectory(conf.saved_caches_directory);
+
+            FileUtils.createDirectory(conf.flush_directory);
         }
         catch (ConfigurationException e)
         {
@@ -932,6 +931,16 @@ public class DatabaseDescriptor
         conf.stream_throughput_outbound_megabits_per_sec = value;
     }
 
+    public static int getInterDCStreamThroughputOutboundMegabitsPerSec()
+    {
+        return conf.inter_dc_stream_throughput_outbound_megabits_per_sec;
+    }
+
+    public static void setInterDCStreamThroughputOutboundMegabitsPerSec(int value)
+    {
+        conf.inter_dc_stream_throughput_outbound_megabits_per_sec = value;
+    }
+
     public static String[] getAllDataFileLocations()
     {
         return conf.data_file_directories;
@@ -1131,12 +1140,47 @@ public class DatabaseDescriptor
 
     public static void setHintedHandoffEnabled(boolean hintedHandoffEnabled)
     {
-        conf.hinted_handoff_enabled = hintedHandoffEnabled;
+        conf.hinted_handoff_enabled_global = hintedHandoffEnabled;
+        conf.hinted_handoff_enabled_by_dc.clear();
+    }
+
+    public static void setHintedHandoffEnabled(final String dcNames)
+    {
+        List<String> dcNameList;
+        try
+        {
+            dcNameList = Config.parseHintedHandoffEnabledDCs(dcNames);
+        }
+        catch (IOException e)
+        {
+            throw new IllegalArgumentException("Could not read csv of dcs for hinted handoff enable. " + dcNames, e);
+        }
+
+        if (dcNameList.isEmpty())
+            throw new IllegalArgumentException("Empty list of Dcs for hinted handoff enable");
+
+        conf.hinted_handoff_enabled_by_dc.clear();
+        conf.hinted_handoff_enabled_by_dc.addAll(dcNameList);
     }
 
     public static boolean hintedHandoffEnabled()
     {
-        return conf.hinted_handoff_enabled;
+        return conf.hinted_handoff_enabled_global;
+    }
+
+    public static Set<String> hintedHandoffEnabledByDC()
+    {
+        return Collections.unmodifiableSet(conf.hinted_handoff_enabled_by_dc);
+    }
+
+    public static boolean shouldHintByDC()
+    {
+        return !conf.hinted_handoff_enabled_by_dc.isEmpty();
+    }
+
+    public static boolean hintedHandoffEnabled(final String dcName)
+    {
+        return conf.hinted_handoff_enabled_by_dc.contains(dcName);
     }
 
     public static void setMaxHintWindow(int ms)
@@ -1403,5 +1447,10 @@ public class DatabaseDescriptor
         }
         String arch = System.getProperty("os.arch");
         return arch.contains("64") || arch.contains("sparcv9");
+    }
+
+    public static String getFlushLocation()
+    {
+        return conf.flush_directory;
     }
 }

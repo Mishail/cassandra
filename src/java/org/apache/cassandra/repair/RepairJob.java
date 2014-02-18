@@ -67,9 +67,9 @@ public class RepairJob
     /**
      * Create repair job to run on specific columnfamily
      */
-    public RepairJob(UUID sessionId, String keyspace, String columnFamily, Range<Token> range, boolean isSequential)
+    public RepairJob(UUID parentSessionId, UUID sessionId, String keyspace, String columnFamily, Range<Token> range, boolean isSequential)
     {
-        this.desc = new RepairJobDesc(sessionId, keyspace, columnFamily, range);
+        this.desc = new RepairJobDesc(parentSessionId, sessionId, keyspace, columnFamily, range);
         this.isSequential = isSequential;
         this.treeRequests = new RequestCoordinator<InetAddress>(isSequential)
         {
@@ -106,7 +106,7 @@ public class RepairJob
         allEndpoints.add(FBUtilities.getBroadcastAddress());
 
         if (isSequential)
-            makeSnapshots(endpoints);
+            makeSnapshots(allEndpoints);
 
         this.gcBefore = Keyspace.open(desc.keyspace).getColumnFamilyStore(desc.columnFamily).gcBefore(System.currentTimeMillis());
 

@@ -437,11 +437,12 @@ public class DataTracker
     public int getMeanColumns()
     {
         long sum = 0;
-        int count = 0;
+        long count = 0;
         for (SSTableReader sstable : getSSTables())
         {
-            sum += sstable.getEstimatedColumnCount().mean();
-            count++;
+            long n = sstable.getEstimatedColumnCount().count();
+            sum += sstable.getEstimatedColumnCount().mean() * n;
+            count += n;
         }
         return count > 0 ? (int) (sum / count) : 0;
     }
@@ -472,6 +473,14 @@ public class DataTracker
         INotification notification = new SSTableAddedNotification(added);
         for (INotificationConsumer subscriber : subscribers)
             subscriber.handleNotification(notification, this);
+    }
+
+    public void notifySSTableRepairedStatusChanged(Collection<SSTableReader> repairStatusesChanged)
+    {
+        INotification notification = new SSTableRepairStatusChanged(repairStatusesChanged);
+        for (INotificationConsumer subscriber : subscribers)
+            subscriber.handleNotification(notification, this);
+
     }
 
     public void notifyDeleting(SSTableReader deleting)

@@ -138,7 +138,8 @@ public class NodeTool
                 DisableHandoff.class,
                 Drain.class,
                 TruncateHints.class,
-                TpStats.class
+                TpStats.class,
+                TakeToken.class
         );
 
         Cli<Runnable> parser = Cli.<Runnable>builder("nodetool")
@@ -1219,10 +1220,17 @@ public class NodeTool
     @Command(name = "enablehandoff", description = "Reenable the future hints storing on the current node")
     public static class EnableHandoff extends NodeToolCmd
     {
+        @Arguments(usage = "<dc-name>,<dc-name>", description = "Enable hinted handoff only for these DCs")
+        private List<String> args = new ArrayList<>();
+
         @Override
         public void execute(NodeProbe probe)
         {
-            probe.enableHintedHandoff();
+            checkArgument(args.size() <= 1, "enablehandoff does not accept two args");
+            if(args.size() == 1)
+                probe.enableHintedHandoff(args.get(0));
+            else
+                probe.enableHintedHandoff();
         }
     }
 
@@ -1360,6 +1368,26 @@ public class NodeTool
         }
     }
 
+    @Command(name = "taketoken", description = "Move the token(s) from the existing owner(s) to this node.  For vnodes only.  Use \\\\ to escape negative tokens.")
+    public static class TakeToken extends NodeToolCmd
+    {
+        @Arguments(usage = "<token, ...>", description = "Token(s) to take", required = true)
+        private List<String> tokens = new ArrayList<String>();
+
+        @Override
+        public void execute(NodeProbe probe)
+        {
+            try
+            {
+                probe.takeTokens(tokens);
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException("Error taking tokens", e);
+            }
+        }
+    }
+
     @Command(name = "join", description = "Join the ring")
     public static class Join extends NodeToolCmd
     {
@@ -1396,6 +1424,8 @@ public class NodeTool
             }
         }
     }
+
+
 
     @Command(name = "pausehandoff", description = "Pause hints delivery process")
     public static class PauseHandoff extends NodeToolCmd
@@ -1524,6 +1554,9 @@ public class NodeTool
         @Option(title = "specific_dc", name = {"-dc", "--in-dc"}, description = "Use -dc to repair specific datacenters")
         private List<String> specificDataCenters = new ArrayList<>();
 
+        @Option(title = "specific_host", name = {"-hosts", "--in-hosts"}, description = "Use -hosts to repair specific hosts")
+        private List<String> specificHosts = new ArrayList<>();
+
         @Option(title = "start_token", name = {"-st", "--start-token"}, description = "Use -st to specify a token at which the repair range starts")
         private String startToken = EMPTY;
 
@@ -1532,6 +1565,9 @@ public class NodeTool
 
         @Option(title = "primary_range", name = {"-pr", "--partitioner-range"}, description = "Use -pr to repair only the first range returned by the partitioner")
         private boolean primaryRange = false;
+
+        @Option(title = "incremental_repair", name = {"-inc", "--incremental"}, description = "Use -inc to use the new incremental repair")
+        private boolean incrementalRepair = false;
 
         @Override
         public void execute(NodeProbe probe)
@@ -1544,15 +1580,17 @@ public class NodeTool
                 try
                 {
                     Collection<String> dataCenters = null;
+                    Collection<String> hosts = null;
                     if (!specificDataCenters.isEmpty())
                         dataCenters = newArrayList(specificDataCenters);
                     else if (localDC)
                         dataCenters = newArrayList(probe.getDataCenter());
-
+                    else if(!specificHosts.isEmpty())
+                        hosts = newArrayList(specificHosts);
                     if (!startToken.isEmpty() || !endToken.isEmpty())
-                        probe.forceRepairRangeAsync(System.out, keyspace, !parallel, dataCenters, startToken, endToken);
+                        probe.forceRepairRangeAsync(System.out, keyspace, !parallel, dataCenters,hosts, startToken, endToken, !incrementalRepair);
                     else
-                        probe.forceRepairAsync(System.out, keyspace, !parallel, dataCenters, primaryRange, cfnames);
+                        probe.forceRepairAsync(System.out, keyspace, !parallel, dataCenters, hosts, primaryRange, !incrementalRepair, cfnames);
                 } catch (Exception e)
                 {
                     throw new RuntimeException("Error occurred during repair", e);

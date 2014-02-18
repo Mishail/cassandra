@@ -38,6 +38,7 @@ import org.apache.cassandra.utils.memory.ContextAllocator;
 import org.apache.cassandra.utils.ObjectSizes;
 import org.apache.cassandra.utils.memory.Pool;
 import org.apache.cassandra.utils.memory.PoolAllocator;
+import org.apache.cassandra.service.ActiveRepairService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -303,6 +304,11 @@ public class Memtable
                                     * 1.2); // bloom filter and row index overhead
         }
 
+        protected Directories.DataDirectory getWriteableLocation()
+        {
+            return cfs.directories.getFlushLocation();
+        }
+
         public long getExpectedWriteSize()
         {
             return estimatedSize;
@@ -353,6 +359,7 @@ public class Memtable
 
                 if (writer.getFilePointer() > 0)
                 {
+                    // temp sstables should contain non-repaired data.
                     ssTable = writer.closeAndOpenReader();
                     logger.info(String.format("Completed flushing %s (%d bytes) for commitlog position %s",
                                               ssTable.getFilename(), new File(ssTable.getFilename()).length(), context));
@@ -379,6 +386,7 @@ public class Memtable
             MetadataCollector sstableMetadataCollector = new MetadataCollector(cfs.metadata.comparator).replayPosition(context);
             return new SSTableWriter(filename,
                                      rows.size(),
+                                     ActiveRepairService.UNREPAIRED_SSTABLE,
                                      cfs.metadata,
                                      cfs.partitioner,
                                      sstableMetadataCollector);

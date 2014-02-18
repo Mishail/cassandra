@@ -38,6 +38,7 @@ import org.apache.cassandra.db.filter.*;
 import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.*;
 import org.apache.cassandra.exceptions.*;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageProxy;
@@ -77,7 +78,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
     private boolean isKeyRange;
     private boolean keyIsInRelation;
     private boolean usesSecondaryIndexing;
-    private boolean lastClusteringIsIn;
+    private boolean needOrderOnLastClustering;
 
     private Map<ColumnIdentifier, Integer> orderingIndexes;
 
@@ -164,6 +165,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         int pageSize = options.getPageSize();
         // A count query will never be paged for the user, but we always page it internally to avoid OOM.
         // If we user provided a pageSize we'll use that to page internally (because why not), otherwise we use our default
+        // Note that if there are some nodes in the cluster with a version less than 2.0, we can't use paging (CASSANDRA-6707).
         if (parameters.isCount && pageSize <= 0)
             pageSize = DEFAULT_COUNT_PAGE_SIZE;
 
@@ -411,7 +413,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             SortedSet<CellName> cellNames = getRequestedColumns(variables);
             if (cellNames == null) // in case of IN () for the last column of the key
                 return null;
-            QueryProcessor.validateCellNames(cellNames);
+            QueryProcessor.validateCellNames(cellNames, cfm.comparator);
             return new NamesQueryFilter(cellNames, true);
         }
     }
@@ -656,14 +658,16 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         // to the component comparator but not to the end-of-component itself),
         // it only depends on whether the slice is reversed
         Bound eocBound = isReversed ? Bound.reverse(bound) : bound;
-        for (ColumnDefinition def : defs)
+        for (Iterator<ColumnDefinition> iter = defs.iterator(); iter.hasNext();)
         {
+            ColumnDefinition def = iter.next();
+
             // In a restriction, we always have Bound.START < Bound.END for the "base" comparator.
             // So if we're doing a reverse slice, we must inverse the bounds when giving them as start and end of the slice filter.
             // But if the actual comparator itself is reversed, we must inversed the bounds too.
             Bound b = isReversed == isReversedType(def) ? bound : Bound.reverse(bound);
             Restriction r = restrictions[def.position()];
-            if (r == null || (r.isSlice() && !((Restriction.Slice)r).hasBound(b)))
+            if (isNullRestriction(r, b))
             {
                 // There wasn't any non EQ relation on that key, we select all records having the preceding component as prefix.
                 // For composites, if there was preceding component and we're computing the end, we must change the last component
@@ -674,12 +678,21 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
             if (r.isSlice())
             {
-                Restriction.Slice slice = (Restriction.Slice)r;
-                assert slice.hasBound(b);
-                ByteBuffer val = slice.bound(b, variables);
-                if (val == null)
-                    throw new InvalidRequestException(String.format("Invalid null clustering key part %s", def.name));
-                return Collections.singletonList(builder.add(val).build().withEOC(eocForRelation(slice.getRelation(eocBound, b))));
+                builder.add(getSliceValue(def, r, b, variables));
+                Relation.Type relType = ((Restriction.Slice)r).getRelation(eocBound, b);
+
+                // We can have more non null restriction if the "scalar" notation was used for the bound (#4851).
+                // In that case, we need to add them all, and end the cell name with the correct end-of-component.
+                while (iter.hasNext())
+                {
+                    def = iter.next();
+                    r = restrictions[def.position()];
+                    if (isNullRestriction(r, b))
+                        break;
+
+                    builder.add(getSliceValue(def, r, b, variables));
+                }
+                return Collections.singletonList(builder.build().withEOC(eocForRelation(relType)));
             }
             else
             {
@@ -697,7 +710,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                             throw new InvalidRequestException(String.format("Invalid null clustering key part %s", def.name));
                         Composite prefix = builder.buildWith(val);
                         // See below for why this
-                        s.add((bound == Bound.END && builder.remainingCount() > 0) ? prefix.end() : prefix);
+                        s.add((b == Bound.END && builder.remainingCount() > 0) ? prefix.end() : prefix);
                     }
                     return new ArrayList<Composite>(s);
                 }
@@ -735,6 +748,21 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 // = X => using X
                 return Composite.EOC.NONE;
         }
+    }
+
+    private static boolean isNullRestriction(Restriction r, Bound b)
+    {
+        return r == null || (r.isSlice() && !((Restriction.Slice)r).hasBound(b));
+    }
+
+    private static ByteBuffer getSliceValue(ColumnDefinition def, Restriction r, Bound b, List<ByteBuffer> variables) throws InvalidRequestException
+    {
+        Restriction.Slice slice = (Restriction.Slice)r;
+        assert slice.hasBound(b);
+        ByteBuffer val = slice.bound(b, variables);
+        if (val == null)
+            throw new InvalidRequestException(String.format("Invalid null clustering key part %s", def.name));
+        return val;
     }
 
     private List<Composite> getRequestedBound(Bound b, List<ByteBuffer> variables) throws InvalidRequestException
@@ -939,10 +967,11 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
         /*
          * We need to do post-query ordering in 2 cases:
-         *   1) if the last clustering key is restricted by a IN.
-         *   2) if the row key is restricted by a IN and there is some ORDER BY values
+         *   1) if the last clustering column is restricted by a IN and has no explicit ORDER BY on it.
+         *   2) if the partition key is restricted by a IN and there is some ORDER BY values
          */
-        if (!(lastClusteringIsIn || (keyIsInRelation && parameters.orderings.size() > 0)))
+        boolean needOrderOnPartitionKey = keyIsInRelation && !parameters.orderings.isEmpty();
+        if (!needOrderOnLastClustering && !needOrderOnPartitionKey)
             return;
 
         assert orderingIndexes != null;
@@ -950,21 +979,21 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         List<Integer> idToSort = new ArrayList<Integer>();
         List<Comparator<ByteBuffer>> sorters = new ArrayList<Comparator<ByteBuffer>>();
 
-        // If the restriction for the last clustering key is an IN, respect requested order
-        if (lastClusteringIsIn)
-        {
-            List<ColumnDefinition> cc = cfm.clusteringColumns();
-            idToSort.add(orderingIndexes.get(cc.get(cc.size() - 1).name));
-            Restriction last = columnRestrictions[columnRestrictions.length - 1];
-            sorters.add(makeComparatorFor(last.values(variables)));
-        }
-
-        // Then add the order by
+        // Note that we add the ORDER BY sorters first as they should prevail over ordering
+        // on the last clustering restriction.
         for (ColumnIdentifier identifier : parameters.orderings.keySet())
         {
             ColumnDefinition orderingColumn = cfm.getColumnDefinition(identifier);
             idToSort.add(orderingIndexes.get(orderingColumn.name));
             sorters.add(orderingColumn.type);
+        }
+
+        if (needOrderOnLastClustering)
+        {
+            List<ColumnDefinition> cc = cfm.clusteringColumns();
+            idToSort.add(orderingIndexes.get(cc.get(cc.size() - 1).name));
+            Restriction last = columnRestrictions[columnRestrictions.length - 1];
+            sorters.add(makeComparatorFor(last.values(variables), isReversed));
         }
 
         Comparator<List<ByteBuffer>> comparator = idToSort.size() == 1
@@ -975,12 +1004,14 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
     // Comparator used when the last clustering key is an IN, to sort result
     // rows in the order of the values provided for the IN.
-    private Comparator<ByteBuffer> makeComparatorFor(final List<ByteBuffer> values)
+    private Comparator<ByteBuffer> makeComparatorFor(final List<ByteBuffer> vals, final boolean isReversed)
     {
         // This may not always be the most efficient, but it probably is if
         // values is small, which is likely to be the most common case.
         return new Comparator<ByteBuffer>()
         {
+            private final List<ByteBuffer> values = isReversed ? com.google.common.collect.Lists.reverse(vals) : vals;
+
             public int compare(ByteBuffer b1, ByteBuffer b2)
             {
                 int idx1 = -1;
@@ -1091,16 +1122,16 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 switch (def.kind)
                 {
                     case PARTITION_KEY:
-                        stmt.keyRestrictions[def.position()] = updateRestriction(def, stmt.keyRestrictions[def.position()], rel, names);
+                        stmt.keyRestrictions[def.position()] = updateRestriction(cfm, def, stmt.keyRestrictions[def.position()], rel, names);
                         break;
                     case CLUSTERING_COLUMN:
-                        stmt.columnRestrictions[def.position()] = updateRestriction(def, stmt.columnRestrictions[def.position()], rel, names);
+                        stmt.columnRestrictions[def.position()] = updateRestriction(cfm, def, stmt.columnRestrictions[def.position()], rel, names);
                         break;
                     case COMPACT_VALUE:
                         throw new InvalidRequestException(String.format("Predicates on the non-primary-key column (%s) of a COMPACT table are not yet supported", def.name));
                     case REGULAR:
                         // We only all IN on the row key and last clustering key so far, never on non-PK columns, and this even if there's an index
-                        Restriction r = updateRestriction(def, stmt.metadataRestrictions.get(def.name), rel, names);
+                        Restriction r = updateRestriction(cfm, def, stmt.metadataRestrictions.get(def.name), rel, names);
                         if (r.isIN() && !((Restriction.IN)r).canHaveOnlyOneValue())
                             // Note: for backward compatibility reason, we conside a IN of 1 value the same as a EQ, so we let that slide.
                             throw new InvalidRequestException(String.format("IN predicates on non-primary-key columns (%s) is not yet supported", def.name));
@@ -1181,6 +1212,8 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 {
                     // Non EQ relation is not supported without token(), even if we have a 2ndary index (since even those are ordered by partitioner).
                     // Note: In theory we could allow it for 2ndary index queries with ALLOW FILTERING, but that would probably require some special casing
+                    // Note bis: This is also why we don't bother handling the 'tuple' notation of #4851 for keys. If we lift the limitation for 2ndary
+                    // index with filtering, we'll need to handle it though.
                     throw new InvalidRequestException("Only EQ and IN relation are supported on the partition key (unless you use the token() function)");
                 }
                 previous = cdef;
@@ -1196,6 +1229,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             // the column is indexed that is.
             canRestrictFurtherComponents = true;
             previous = null;
+            boolean previousIsSlice = false;
             iter = cfm.clusteringColumns().iterator();
             for (int i = 0; i < stmt.columnRestrictions.length; i++)
             {
@@ -1205,19 +1239,31 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 if (restriction == null)
                 {
                     canRestrictFurtherComponents = false;
+                    previousIsSlice = false;
                 }
                 else if (!canRestrictFurtherComponents)
                 {
-                    if (hasQueriableIndex)
+                    // We're here if the previous clustering column was either not restricted or was a slice.
+                    // We can't restrict the current column unless:
+                    //   1) we're in the special case of the 'tuple' notation from #4851 which we expand as multiple
+                    //      consecutive slices: in which case we're good with this restriction and we continue
+                    //   2) we have a 2ndary index, in which case we have to use it but can skip more validation
+                    boolean hasTuple = false;
+                    boolean hasRestrictedNotTuple = false;
+                    if (!(previousIsSlice && restriction.isSlice() && ((Restriction.Slice)restriction).isPartOfTuple()))
                     {
-                        stmt.usesSecondaryIndexing = true; // handle gaps and non-keyrange cases.
-                        break;
+                        if (hasQueriableIndex)
+                        {
+                            stmt.usesSecondaryIndexing = true; // handle gaps and non-keyrange cases.
+                            break;
+                        }
+                        throw new InvalidRequestException(String.format("PRIMARY KEY part %s cannot be restricted (preceding part %s is either not restricted or by a non-EQ relation)", cdef.name, previous));
                     }
-                    throw new InvalidRequestException(String.format("PRIMARY KEY part %s cannot be restricted (preceding part %s is either not restricted or by a non-EQ relation)", cdef.name, previous));
                 }
                 else if (restriction.isSlice())
                 {
                     canRestrictFurtherComponents = false;
+                    previousIsSlice = true;
                     Restriction.Slice slice = (Restriction.Slice)restriction;
                     // For non-composite slices, we don't support internally the difference between exclusive and
                     // inclusive bounds, so we deal with it manually.
@@ -1232,7 +1278,16 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                         throw new InvalidRequestException(String.format("PRIMARY KEY part %s cannot be restricted by IN relation", cdef.name));
                     else if (stmt.selectACollection())
                         throw new InvalidRequestException(String.format("Cannot restrict PRIMARY KEY part %s by IN relation as a collection is selected by the query", cdef.name));
-                    stmt.lastClusteringIsIn = true;
+                    // We will return rows in the order of the IN, unless that clustering column has a specific order set on.
+                    if (parameters.orderings.get(cdef.name) == null)
+                    {
+                        stmt.needOrderOnLastClustering = true;
+                        stmt.orderingIndexes = new HashMap<ColumnIdentifier, Integer>();
+                        int index = indexOf(cdef, stmt.selection);
+                        if (index < 0)
+                            index = stmt.selection.addColumnForOrdering(cdef);
+                        stmt.orderingIndexes.put(cdef.name, index);
+                    }
                 }
 
                 previous = cdef;
@@ -1265,12 +1320,12 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 if (stmt.isKeyRange)
                     throw new InvalidRequestException("ORDER BY is only supported when the partition key is restricted by an EQ or an IN.");
 
-                // If we order an IN query, we'll have to do a manual sort post-query. Currently, this sorting requires that we
-                // have queried the column on which we sort (TODO: we should update it to add the column on which we sort to the one
-                // queried automatically, and then removing it from the resultSet afterwards if needed)
-                if (stmt.keyIsInRelation)
+                // If we order post-query (see orderResults), the sorted column needs to be in the ResultSet for sorting, even if we don't
+                // ultimately ship them to the client (CASSANDRA-4911).
+                if (stmt.keyIsInRelation || stmt.needOrderOnLastClustering)
                 {
-                    stmt.orderingIndexes = new HashMap<ColumnIdentifier, Integer>();
+                    if (stmt.orderingIndexes == null)
+                        stmt.orderingIndexes = new HashMap<ColumnIdentifier, Integer>();
                     for (ColumnIdentifier column : stmt.parameters.orderings.keySet())
                     {
                         final ColumnDefinition def = cfm.getColumnDefinition(column);
@@ -1282,27 +1337,10 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                                 throw new InvalidRequestException(String.format("Order by on unknown column %s", column));
                         }
 
-                        if (selectClause.isEmpty()) // wildcard
-                        {
-                            stmt.orderingIndexes.put(def.name, indexOf(def, cfm.allColumnsInSelectOrder()));
-                        }
-                        else
-                        {
-                            boolean hasColumn = false;
-                            for (int i = 0; i < selectClause.size(); i++)
-                            {
-                                RawSelector selector = selectClause.get(i);
-                                if (def.name.equals(selector.selectable))
-                                {
-                                    stmt.orderingIndexes.put(def.name, i);
-                                    hasColumn = true;
-                                    break;
-                                }
-                            }
-
-                            if (!hasColumn)
-                                throw new InvalidRequestException("ORDER BY could not be used on columns missing in select clause.");
-                        }
+                        int index = indexOf(def, stmt.selection);
+                        if (index < 0)
+                            index = stmt.selection.addColumnForOrdering(def);
+                        stmt.orderingIndexes.put(def.name, index);
                     }
                 }
 
@@ -1351,16 +1389,6 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                 stmt.isReversed = isReversed;
             }
 
-            if (stmt.lastClusteringIsIn)
-            {
-                // This means we'll have to do post-query reordering, so update the orderingIndexes
-                if (stmt.orderingIndexes == null)
-                    stmt.orderingIndexes = new HashMap<ColumnIdentifier, Integer>();
-
-                ColumnDefinition last = cfm.clusteringColumns().get(cfm.clusteringColumns().size() - 1);
-                stmt.orderingIndexes.put(last.name, indexOf(last, stmt.selection.getColumnsList().iterator()));
-            }
-
             // Make sure this queries is allowed (note: non key range non indexed cannot involve filtering underneath)
             if (!parameters.allowFiltering && (stmt.isKeyRange || stmt.usesSecondaryIndexing))
             {
@@ -1373,6 +1401,11 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             }
 
             return new ParsedStatement.Prepared(stmt, names);
+        }
+
+        private int indexOf(ColumnDefinition def, Selection selection)
+        {
+            return indexOf(def, selection.getColumnsList().iterator());
         }
 
         private int indexOf(final ColumnDefinition def, Iterator<ColumnDefinition> defs)
@@ -1414,7 +1447,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             return new ColumnSpecification(keyspace(), columnFamily(), new ColumnIdentifier("[limit]", true), Int32Type.instance);
         }
 
-        Restriction updateRestriction(ColumnDefinition def, Restriction restriction, Relation newRel, VariableSpecifications boundNames) throws InvalidRequestException
+        Restriction updateRestriction(CFMetaData cfm, ColumnDefinition def, Restriction restriction, Relation newRel, VariableSpecifications boundNames) throws InvalidRequestException
         {
             ColumnSpecification receiver = def;
             if (newRel.onToken)
@@ -1427,6 +1460,10 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                                                    new ColumnIdentifier("partition key token", true),
                                                    StorageService.getPartitioner().getTokenValidator());
             }
+
+            // We can only use the tuple notation of #4851 on clustering columns for now
+            if (newRel.previousInTuple != null && def.kind != ColumnDefinition.Kind.CLUSTERING_COLUMN)
+                throw new InvalidRequestException(String.format("Tuple notation can only be used on clustering columns but found on %s", def.name));
 
             switch (newRel.operator())
             {
@@ -1474,7 +1511,9 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
                             throw new InvalidRequestException(String.format("%s cannot be restricted by both an equal and an inequal relation", def.name));
                         Term t = newRel.getValue().prepare(keyspace(), receiver);
                         t.collectMarkerSpecification(boundNames);
-                        ((Restriction.Slice)restriction).setBound(def.name, newRel.operator(), t);
+                        if (newRel.previousInTuple != null && (def.position() == 0 || !cfm.clusteringColumns().get(def.position() - 1).name.equals(newRel.previousInTuple)))
+                            throw new InvalidRequestException(String.format("Invalid tuple notation, column %s is not before column %s in the clustering order", newRel.previousInTuple, def.name));
+                        ((Restriction.Slice)restriction).setBound(def.name, newRel.operator(), t, newRel.previousInTuple);
                     }
                     break;
                 case CONTAINS_KEY:

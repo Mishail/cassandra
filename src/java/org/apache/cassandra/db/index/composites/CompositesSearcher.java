@@ -80,6 +80,7 @@ public class CompositesSearcher extends SecondaryIndexSearcher
         final IndexExpression primary = highestSelectivityPredicate(filter.getClause());
         final CompositesIndex index = (CompositesIndex)indexManager.getIndexForColumn(primary.column);
         assert index != null;
+        assert index.getIndexCfs() != null;
         final DecoratedKey indexKey = index.getIndexKeyFor(primary.value);
 
         if (logger.isDebugEnabled())
@@ -272,8 +273,8 @@ public class CompositesSearcher extends SecondaryIndexSearcher
                             continue;
 
                         if (data == null)
-                            data = TreeMapBackedSortedColumns.factory.create(baseCfs.metadata);
-                        data.resolve(newData);
+                            data = ArrayBackedSortedColumns.factory.create(baseCfs.metadata);
+                        data.addAll(newData);
                         columnsCount += dataFilter.lastCounted();
                     }
                  }

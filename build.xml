@@ -25,7 +25,7 @@
     <property name="debuglevel" value="source,lines,vars"/>
 
     <!-- default version and SCM information -->
-    <property name="base.version" value="2.1"/>
+    <property name="base.version" value="2.1.0-beta1"/>
     <property name="scm.connection" value="scm:git://git.apache.org/cassandra.git"/>
     <property name="scm.developerConnection" value="scm:git://git.apache.org/cassandra.git"/>
     <property name="scm.url" value="http://git-wip-us.apache.org/repos/asf?p=cassandra.git;a=tree"/>
@@ -56,6 +56,7 @@
     <property name="test.conf" value="${test.dir}/conf"/>
     <property name="test.data" value="${test.dir}/data"/>
     <property name="test.name" value="*Test"/>
+    <property name="test.methods" value=""/>
     <property name="test.unit.src" value="${test.dir}/unit"/>
     <property name="test.long.src" value="${test.dir}/long"/>
     <property name="test.pig.src" value="${test.dir}/pig"/>
@@ -340,7 +341,7 @@
           <dependency groupId="org.xerial.snappy" artifactId="snappy-java" version="1.0.5"/>
           <dependency groupId="net.jpountz.lz4" artifactId="lz4" version="1.2.0"/>
           <dependency groupId="com.ning" artifactId="compress-lzf" version="0.8.4"/>
-          <dependency groupId="com.google.guava" artifactId="guava" version="15.0"/>
+          <dependency groupId="com.google.guava" artifactId="guava" version="16.0"/>
           <dependency groupId="commons-cli" artifactId="commons-cli" version="1.1"/>
           <dependency groupId="commons-codec" artifactId="commons-codec" version="1.2"/>
           <dependency groupId="org.apache.commons" artifactId="commons-lang3" version="3.1"/>
@@ -373,6 +374,7 @@
           	<exclusion groupId="org.mortbay.jetty" artifactId="servlet-api"/>
           </dependency>
           <dependency groupId="org.apache.hadoop" artifactId="hadoop-minicluster" version="1.0.3"/>
+          <dependency groupId="com.twitter.elephantbird" artifactId="elephant-bird-hadoop-compat" version="4.3"/>
           <dependency groupId="org.apache.pig" artifactId="pig" version="0.11.1"/>
           <dependency groupId="net.java.dev.jna" artifactId="jna" version="4.0.0"/>
 
@@ -382,12 +384,12 @@
           <dependency groupId="org.apache.cassandra" artifactId="cassandra-thrift" version="${version}" />
           <dependency groupId="com.yammer.metrics" artifactId="metrics-core" version="2.2.0" />
           <dependency groupId="com.addthis.metrics" artifactId="reporter-config" version="2.1.0" />
-          <dependency groupId="edu.stanford.ppl" artifactId="snaptree" version="0.1" />
           <dependency groupId="org.mindrot" artifactId="jbcrypt" version="0.3m" />
           <dependency groupId="io.airlift" artifactId="airline" version="0.6" />
           <dependency groupId="io.netty" artifactId="netty" version="3.6.6.Final" />
           <dependency groupId="com.google.code.findbugs" artifactId="jsr305" version="2.0.2" />
           <dependency groupId="com.clearspring.analytics" artifactId="stream" version="2.5.2" />
+          <dependency groupId="net.sf.supercsv" artifactId="super-csv" version="2.1.0" />
         </dependencyManagement>
         <developer id="alakshman" name="Avinash Lakshman"/>
         <developer id="antelder" name="Anthony Elder"/>
@@ -416,9 +418,9 @@
         <dependency groupId="org.apache.rat" artifactId="apache-rat"/>
         <dependency groupId="org.apache.hadoop" artifactId="hadoop-core"/>
       	<dependency groupId="org.apache.hadoop" artifactId="hadoop-minicluster"/>
+        <dependency groupId="com.twitter.elephantbird" artifactId="elephant-bird-hadoop-compat"/>
         <dependency groupId="org.apache.pig" artifactId="pig"/>
       	<dependency groupId="com.google.code.findbugs" artifactId="jsr305"/>
-        <dependency groupId="io.airlift" artifactId="airline"/>
       </artifact:pom>
 
       <artifact:pom id="coverage-deps-pom"
@@ -472,6 +474,7 @@
         <dependency groupId="com.addthis.metrics" artifactId="reporter-config"/>
         <dependency groupId="com.thinkaurelius.thrift" artifactId="thrift-server" version="0.3.3"/>
         <dependency groupId="com.clearspring.analytics" artifactId="stream" version="2.5.2" />
+        <dependency groupId="net.sf.supercsv" artifactId="super-csv" version="2.1.0" />
 
         <dependency groupId="ch.qos.logback" artifactId="logback-core"/>
         <dependency groupId="ch.qos.logback" artifactId="logback-classic"/>
@@ -482,6 +485,7 @@
         <!-- don't need hadoop classes to run, but if you use the hadoop stuff -->
         <dependency groupId="org.apache.hadoop" artifactId="hadoop-core" optional="true"/>
         <dependency groupId="org.apache.hadoop" artifactId="hadoop-minicluster" optional="true"/>
+        <dependency groupId="com.twitter.elephantbird" artifactId="elephant-bird-hadoop-compat" optional="true"/>
         <dependency groupId="org.apache.pig" artifactId="pig" optional="true"/>
 
         <!-- don't need jna to run, but nice to have -->
@@ -1121,6 +1125,17 @@
         <exclude name="**/pig/*.java" />
     </fileset>
   </target>
+
+  <target name="testsome" depends="build-test" description="Execute specific unit tests" >
+    <testmacro suitename="unit" inputdir="${test.unit.src}" exclude="**/pig/*.java" timeout="${test.timeout}">
+      <test name="${test.name}" methods="${test.methods}"/>
+      <jvmarg value="-Dlegacy-sstable-root=${test.data}/legacy-sstables"/>
+      <jvmarg value="-Dcorrupt-sstable-root=${test.data}/corrupt-sstables"/>
+      <jvmarg value="-Dmigration-sstable-root=${test.data}/migration-sstables"/>
+      <jvmarg value="-Dcassandra.ring_delay_ms=1000"/>
+      <jvmarg value="-Dcassandra.tolerate_sstable_size=true"/>
+    </testmacro>
+  </target>
     
   <target name="test-compression" depends="build-test" description="Execute unit tests with sstable compression enabled">
       <testmacro suitename="unit" inputdir="${test.unit.src}" exclude="**/pig/*.java" timeout="${test.timeout}">
@@ -1301,6 +1316,9 @@
      </fileset>
  	 <fileset dir="build/lib/jars">
   	    <include name="**/*.jar" />
+  	 </fileset>
+  	 <fileset dir="tools/lib">
+  	     <include name="**/*.jar" />
   	 </fileset>
   	</path>
   	<property name="eclipse-project-libs" refid="eclipse-project-libs-path"/>

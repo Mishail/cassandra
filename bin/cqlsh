@@ -33,7 +33,7 @@ from __future__ import with_statement
 from cassandra.query import SimpleStatement
 
 description = "CQL Shell for Apache Cassandra"
-version = "4.1.1"
+version = "4.1.2"
 
 from StringIO import StringIO
 from contextlib import contextmanager, closing
@@ -105,7 +105,7 @@ cqlshlibdir = os.path.join(CASSANDRA_PATH, 'pylib')
 if os.path.isdir(cqlshlibdir):
     sys.path.insert(0, cqlshlibdir)
 
-from cqlshlib import cqlhandling, cql3handling, pylexotron
+from cqlshlib import cqlhandling, cql3handling, pylexotron, usertypes
 from cqlshlib.displaying import (RED, BLUE, ANSI_RESET, COLUMN_NAME_COLORS,
                                  FormattedValue, colorme)
 from cqlshlib.formatting import format_by_type
@@ -127,7 +127,7 @@ if os.path.exists(OLD_HISTORY):
 
 DEFAULT_HOST = 'localhost'
 DEFAULT_PORT = 9042
-DEFAULT_CQLVER = '3.1.4'
+DEFAULT_CQLVER = '3.1.5'
 
 DEFAULT_TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
 DEFAULT_FLOAT_PRECISION = 5
@@ -221,7 +221,9 @@ cqlsh_extra_syntax_rules = r'''
                                   | ( "COLUMNFAMILY" | "TABLE" ) cf=<columnFamilyName>
                                   | ( "COLUMNFAMILIES" | "TABLES" )
                                   | "FULL"? "SCHEMA"
-                                  | "CLUSTER" )
+                                  | "CLUSTER"
+                                  | "TYPES"
+                                  | "TYPE" ut=<userTypeName>)
                     ;
 
 <consistencyCommand> ::= "CONSISTENCY" ( level=<consistencyLevel> )?
@@ -357,6 +359,9 @@ class ColumnFamilyNotFound(Exception):
 class VersionNotSupported(Exception):
     pass
 
+class UserTypeNotFound(Exception):
+    pass
+
 class DecodeError(Exception):
     verb = 'decode'
 
@@ -444,6 +449,7 @@ class Shell(cmd.Cmd):
     shunted_query_out = None
     csv_dialect_defaults = dict(delimiter=',', doublequote=False,
                                 escapechar='\\', quotechar='"')
+    utypes_meta = None
 
     def __init__(self, hostname, port, color=False,
                  username=None, password=None, encoding=None, stdin=None, tty=True,
@@ -499,6 +505,9 @@ class Shell(cmd.Cmd):
         self.stdin = stdin
         self.query_out = sys.stdout
         self.consistency_level = cassandra.ConsistencyLevel.ONE
+        self.refresh_utypes_meta()
+        #UserTypes will use it to get theirs field names
+        usertypes.get_field_names = lambda k, t: self.utypes_meta.get_field_names(k, t)
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
@@ -580,6 +589,21 @@ class Shell(cmd.Cmd):
         layout = self.get_table_meta(ksname, cfname)
         return [str(col) for col in layout.columns]
 
+    def get_usertype_names(self, ksname=None):
+        if ksname is None:
+            ksname = self.current_keyspace
+
+        return self.utypes_meta.get_usertypes_names(ksname)
+
+    def get_usertype_layout(self, ksname, typename):
+        if ksname is None:
+            ksname = self.current_keyspace
+        layout = self.utypes_meta.get_fields_with_types(ksname, typename)
+
+        if not layout:
+            raise UserTypeNotFound("User type %r not found" % typename)
+        return layout
+
     def get_cluster_name(self):
         return self.conn.metadata.cluster_name
 
@@ -602,13 +626,19 @@ class Shell(cmd.Cmd):
     def get_table_meta(self, ksname, tablename):
         if ksname is None:
             ksname = self.current_keyspace
-
         ksmeta = self.get_keyspace_meta(ksname)
 
         if tablename not in ksmeta.tables:
             raise ColumnFamilyNotFound("Column family %r not found" % tablename)
 
         return ksmeta.tables[tablename]
+
+    def build_usertypes_meta(self):
+        data = self.session.execute("select * from system.schema_usertypes")
+        if not data:
+            return None
+
+        return cql3handling.UserTypesMeta.from_layout(data)
 
     def reset_statement(self):
         self.reset_prompt()
@@ -669,6 +699,15 @@ class Shell(cmd.Cmd):
             if newline == until:
                 return
             yield newline
+
+    def refresh_utypes_meta(self):
+        try:
+            self.utypes_meta = self.build_usertypes_meta()
+        except Exception, e:
+            if self.debug:
+                import traceback
+                traceback.print_exc()
+
 
     def cmdloop(self):
         """
@@ -822,6 +861,8 @@ class Shell(cmd.Cmd):
             self.writeresult("")
             self.print_static_result(rows)
         self.flush_output()
+        if self.could_change_schema(statement):
+            self.refresh_utypes_meta()
         return True
 
     def print_result(self, rows, with_default_limit):
@@ -953,11 +994,21 @@ class Shell(cmd.Cmd):
         ksname = self.cql_protect_name(ksdef.name)
         out.write(ksdef.as_cql_query())
 
-        cfs = ksdef.tables.keys()
+        cfs = self.get_columnfamily_names(ksname)
         if cfs:
             for cf in cfs:
                 out.write('\n')
                 self.print_recreate_columnfamily(ksname, cf, out)
+
+    def print_recreate_usertype(self, ksname, utname, out):
+        layout = self.get_usertype_layout(ksname, utname)
+        out.write("CREATE TYPE %s (\n" % utname)
+        for (index,(tname,ttype)) in enumerate(layout, 1):
+            out.write("  %s %s" % (tname, ttype))
+            if index < len(layout):
+                out.write(",\n")
+            else:
+                out.write("\n); \n")
 
     def print_recreate_columnfamily(self, ksname, cfname, out):
         """
@@ -998,6 +1049,26 @@ class Shell(cmd.Cmd):
         else:
             cmd.Cmd.columnize(self, self.get_columnfamily_names(ksname))
             print
+
+    def describe_usertypes(self, ksname):
+        print
+        if ksname is None:
+            for k in self.get_keyspaces():
+                name = self.cql_protect_name(k.name)
+                print 'Keyspace %s' % (name,)
+                print '---------%s' % ('-' * len(name))
+                cmd.Cmd.columnize(self, self.get_usertype_names(k.name))
+                print
+        else:
+            cmd.Cmd.columnize(self, self.get_usertype_names(ksname))
+            print
+
+    def describe_usertype(self, ksname, typename):
+        if ksname is None:
+            ksname = self.current_keyspace
+        print
+        self.print_recreate_usertype(ksname, typename, sys.stdout)
+        print
 
     def describe_cluster(self):
         print '\nCluster: %s' % self.get_cluster_name()
@@ -1085,6 +1156,12 @@ class Shell(cmd.Cmd):
             self.describe_columnfamily(ks, cf)
         elif what in ('columnfamilies', 'tables'):
             self.describe_columnfamilies(self.current_keyspace)
+        elif what == 'types':
+            self.describe_usertypes(self.current_keyspace)
+        elif what == 'type':
+            ks = self.cql_unprotect_name(parsed.get_binding('ksname', None))
+            ut = self.cql_unprotect_name(parsed.get_binding('utname'))
+            self.describe_usertype(ks, ut)
         elif what == 'cluster':
             self.describe_cluster()
         elif what == 'schema':
@@ -1612,6 +1689,11 @@ class Shell(cmd.Cmd):
         if shownum:
             text = '%s:%d:%s' % (self.stdin.name, self.lineno, text)
         self.writeresult(text, color, newline=newline, out=sys.stderr)
+
+    @staticmethod
+    def could_change_schema(statement):
+        import re
+        return re.match(r"(alter|create|drop)\s+type", statement.query_string.lower())
 
 def option_with_default(cparser_getter, section, option, default=None):
     try:

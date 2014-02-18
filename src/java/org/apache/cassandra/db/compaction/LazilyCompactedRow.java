@@ -81,7 +81,7 @@ public class LazilyCompactedRow extends AbstractCompactedRow
         // containing `key` outside of the set of sstables involved in this compaction.
         maxPurgeableTimestamp = controller.maxPurgeableTimestamp(key);
 
-        emptyColumnFamily = EmptyColumns.factory.create(controller.cfs.metadata);
+        emptyColumnFamily = ArrayBackedSortedColumns.factory.create(controller.cfs.metadata);
         emptyColumnFamily.delete(maxRowTombstone);
         if (maxRowTombstone.markedForDeleteAt < maxPurgeableTimestamp)
             emptyColumnFamily.purgeTombstones(controller.gcBefore);
@@ -261,6 +261,17 @@ public class LazilyCompactedRow extends AbstractCompactedRow
                     container.clear();
                     return null;
                 }
+
+                int localDeletionTime = container.deletionInfo().getTopLevelDeletion().localDeletionTime;
+                if (localDeletionTime < Integer.MAX_VALUE)
+                    tombstones.update(localDeletionTime);
+                Iterator<RangeTombstone> rangeTombstoneIterator = container.deletionInfo().rangeIterator();
+                while (rangeTombstoneIterator.hasNext())
+                {
+                    RangeTombstone rangeTombstone = rangeTombstoneIterator.next();
+                    tombstones.update(rangeTombstone.getLocalDeletionTime());
+                }
+
                 Cell reduced = iter.next();
                 container.clear();
 
