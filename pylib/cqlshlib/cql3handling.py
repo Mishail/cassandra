@@ -788,7 +788,7 @@ def delete_opt_completer(ctxt, cass):
 @completer_for('deleteSelector', 'delcol')
 def delete_delcol_completer(ctxt, cass):
     layout = get_cf_layout(ctxt, cass)
-    return map(maybe_escape_name, layout.regular_columns)
+    return map(maybe_escape_name, layout.regular_columns) #FIXME
 
 syntax_rules += r'''
 <batchStatement> ::= "BEGIN" ( "UNLOGGED" | "COUNTER" )? "BATCH"
@@ -935,7 +935,7 @@ explain_completion('createIndexStatement', 'indexname', '<new_index_name>')
 @completer_for('createIndexStatement', 'col')
 def create_index_col_completer(ctxt, cass):
     layout = get_cf_layout(ctxt, cass)
-    colnames = [cd.name for cd in layout.columns if cd.index_name is None]
+    colnames = [cd.name for cd in layout.columns.values() if not cd.index]
     return map(maybe_escape_name, colnames)
 
 syntax_rules += r'''
@@ -969,7 +969,7 @@ syntax_rules += r'''
 @completer_for('alterInstructions', 'existcol')
 def alter_table_col_completer(ctxt, cass):
     layout = get_cf_layout(ctxt, cass)
-    cols = [md.name for md in layout.columns]
+    cols = [str(md) for md in layout.columns]
     return map(maybe_escape_name, cols)
 
 explain_completion('alterInstructions', 'newcol', '<new_column_name>')
