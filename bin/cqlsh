@@ -36,10 +36,8 @@ description = "CQL Shell for Apache Cassandra"
 version = "4.1.1"
 
 from StringIO import StringIO
-from itertools import groupby
 from contextlib import contextmanager, closing
 from glob import glob
-from uuid import UUID
 
 import cmd
 import sys
@@ -65,7 +63,6 @@ except ImportError:
     pass
 
 CQL_LIB_PREFIX = 'cql-internal-only-'
-THRIFT_LIB_PREFIX = 'thrift-python-internal-only-'
 
 CASSANDRA_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
 
@@ -89,9 +86,6 @@ cql_zip = find_zip(CQL_LIB_PREFIX)
 if cql_zip:
     ver = os.path.splitext(os.path.basename(cql_zip))[0][len(CQL_LIB_PREFIX):]
     sys.path.insert(0, os.path.join(cql_zip, 'cql-' + ver))
-thrift_zip = find_zip(THRIFT_LIB_PREFIX)
-if thrift_zip:
-    sys.path.insert(0, thrift_zip)
 
 try:
     import cassandra
@@ -105,8 +99,7 @@ except ImportError, e:
 from cassandra.cluster import Cluster
 #import cql.decoders TODO: cleanup
 #from cql.cursor import _VOID_DESCRIPTION
-from cassandra.cqltypes import (cql_typename, lookup_casstype,
-                          CassandraType, ReversedType, CompositeType)
+from cassandra.cqltypes import ReversedType
 
 # cqlsh should run correctly when run out of a Cassandra source tree,
 # out of an unpacked Cassandra tarball, and after a proper package install.
@@ -441,7 +434,6 @@ class Shell(cmd.Cmd):
     continue_prompt = "   ... "
     keyspace_prompt = custom_prompt + "cqlsh:%s> "
     keyspace_continue_prompt = "%s    ... "
-    num_retries = 4 #TODO ???
     show_line_nums = False
     debug = False
     stop = False
@@ -503,6 +495,7 @@ class Shell(cmd.Cmd):
             self.show_line_nums = True
         self.stdin = stdin
         self.query_out = sys.stdout
+        self.consistency_level = cassandra.ConsistencyLevel.ONE
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
@@ -596,17 +589,14 @@ class Shell(cmd.Cmd):
         else:
             raise KeyspaceNotFound('Keyspace %r not found.' % ksname)
 
-
     def get_keyspaces(self):
         return self.conn.metadata.keyspaces.values()
-
 
     def get_ring(self):
         if self.current_keyspace is None or self.current_keyspace == 'system':
             raise NoKeyspaceError("Ring view requires a current non-system keyspace")
         return self.conn.metadata.token_map.tokens_to_hosts_by_ks[self.current_keyspace]
 
-    #FIXME
     def get_columnfamily_layout(self, ksname, tablename):
         if ksname is None:
             ksname = self.current_keyspace
@@ -616,8 +606,7 @@ class Shell(cmd.Cmd):
         if tablename not in ksmeta.tables:
             raise ColumnFamilyNotFound("Column family %r not found" % tablename)
 
-        layout = ksmeta.tables[tablename]
-        return layout
+        return ksmeta.tables[tablename]
 
     def reset_statement(self):
         self.reset_prompt()
@@ -695,7 +684,7 @@ class Shell(cmd.Cmd):
                 except EOFError:
                     self.handle_eof()
                 except CQL_ERRORS, cqlerr:
-                     self.printerr(str(cqlerr))
+                    self.printerr(str(cqlerr))
                 except KeyboardInterrupt:
                     self.reset_statement()
                     print
@@ -792,10 +781,6 @@ class Shell(cmd.Cmd):
                 self.current_keyspace = ksname.lower()
 
     def do_select(self, parsed):
-        ksname = parsed.get_binding('ksname')
-        if ksname is not None:
-            ksname = self.cql_unprotect_name(ksname)
-        cfname = self.cql_unprotect_name(parsed.get_binding('cfname'))
         statement = parsed.extract_orig()
         with_default_limit = parsed.get_binding('limit') is None
         if with_default_limit:
@@ -803,8 +788,7 @@ class Shell(cmd.Cmd):
         self.perform_statement(statement, with_default_limit=with_default_limit)
 
     def perform_statement(self, statement, with_default_limit=False):
-        from cassandra.query import SimpleStatement
-        stmt = SimpleStatement(statement, tracing_enabled=self.tracing_enabled)
+        stmt = SimpleStatement(statement, tracing_enabled=self.tracing_enabled, consistency_level=self.consistency_level)
         result = self.perform_simple_statement(stmt,
                                                 with_default_limit=with_default_limit)
         if self.tracing_enabled:
@@ -812,7 +796,6 @@ class Shell(cmd.Cmd):
             print_trace_session(self, self.session, stmt.trace.trace_id)
 
         return result
-
 
     def perform_simple_statement(self, statement, with_default_limit=False):
         if not statement:
@@ -982,7 +965,7 @@ class Shell(cmd.Cmd):
         Writes output to the given out stream.
         """
         out.write(self.conn.metadata.keyspaces[ksname].tables[cfname].export_as_string())
-        out.write(";")
+        out.write("\n")
 
     def describe_keyspaces(self):
         print
@@ -1291,17 +1274,17 @@ class Shell(cmd.Cmd):
             self.prep_export_dump(ks, cf, columns)
             writer = csv.writer(csvdest, **dialect_options)
             if header:
-                writer.writerow([d[0] for d in self.session.description])
+                writer.writerow([d[0] for d in self.session.description]) #FIXME
             rows = 0
             while True:
-                row = self.session.fetchone()
+                row = self.session.fetchone() #FIXME
                 if row is None:
                     break
                 fmt = lambda v, t: \
                     format_value(v, t, output_encoding=encoding, nullval=nullval,
                                  time_format=self.display_time_format,
                                  float_precision=self.display_float_precision).strval
-                writer.writerow(map(fmt, row, self.session.column_types))
+                writer.writerow(map(fmt, row, self.session.column_types)) #FIXME
                 rows += 1
         finally:
             if do_close:
@@ -1555,10 +1538,10 @@ class Shell(cmd.Cmd):
         """
         level = parsed.get_binding('level')
         if level is None:
-            print 'Current consistency level is %s.' % (self.session.consistency_level,)
+            print 'Current consistency level is %s.' % (self.consistency_level)
             return
 
-        self.session.consistency_level = level.upper()
+        self.consistency_level = cassandra.ConsistencyLevel.name_to_value[level.upper()]
         print 'Consistency level set to %s.' % (level.upper(),)
 
     def do_exit(self, parsed=None):
