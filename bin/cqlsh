@@ -564,12 +564,12 @@ class Shell(cmd.Cmd):
         if ksname is None:
             ksname = self.current_keyspace
 
-        return map(str, self.get_keyspace(ksname).tables.keys())
+        return map(str, self.get_keyspace_meta(ksname).tables.keys())
 
     def get_index_names(self, ksname=None):
         idxnames = []
         for cfname in self.get_columnfamily_names(ksname=ksname):
-            for col in self.get_columnfamily_layout(ksname, cfname).columns.values():
+            for col in self.get_table_meta(ksname, cfname).columns.values():
                 if col.index:
                     idxnames.append(col.index.name)
         return idxnames
@@ -577,7 +577,7 @@ class Shell(cmd.Cmd):
     def get_column_names(self, ksname, cfname):
         if ksname is None:
             ksname = self.current_keyspace
-        layout = self.get_columnfamily_layout(ksname, cfname)
+        layout = self.get_table_meta(ksname, cfname)
         return [str(col) for col in layout.columns]
 
     def get_cluster_name(self):
@@ -586,11 +586,10 @@ class Shell(cmd.Cmd):
     def get_partitioner(self):
         return self.conn.metadata.partitioner
 
-    def get_keyspace(self, ksname):
-        if ksname in self.conn.metadata.keyspaces:
-            return self.conn.metadata.keyspaces[ksname]
-        else:
+    def get_keyspace_meta(self, ksname):
+        if not ksname in self.conn.metadata.keyspaces:
             raise KeyspaceNotFound('Keyspace %r not found.' % ksname)
+        return self.conn.metadata.keyspaces[ksname]
 
     def get_keyspaces(self):
         return self.conn.metadata.keyspaces.values()
@@ -600,11 +599,11 @@ class Shell(cmd.Cmd):
             raise NoKeyspaceError("Ring view requires a current non-system keyspace")
         return self.conn.metadata.token_map.tokens_to_hosts_by_ks[self.current_keyspace]
 
-    def get_columnfamily_layout(self, ksname, tablename):
+    def get_table_meta(self, ksname, tablename):
         if ksname is None:
             ksname = self.current_keyspace
 
-        ksmeta = self.get_keyspace(ksname)
+        ksmeta = self.get_keyspace_meta(ksname)
 
         if tablename not in ksmeta.tables:
             raise ColumnFamilyNotFound("Column family %r not found" % tablename)
@@ -967,7 +966,7 @@ class Shell(cmd.Cmd):
 
         Writes output to the given out stream.
         """
-        out.write(self.get_columnfamily_layout(ksname, cfname).export_as_string())
+        out.write(self.get_table_meta(ksname, cfname).export_as_string())
         out.write("\n")
 
     def describe_keyspaces(self):
@@ -977,7 +976,7 @@ class Shell(cmd.Cmd):
 
     def describe_keyspace(self, ksname):
         print
-        self.print_recreate_keyspace(self.get_keyspace(ksname), sys.stdout)
+        self.print_recreate_keyspace(self.get_keyspace_meta(ksname), sys.stdout)
         print
 
     def describe_columnfamily(self, ksname, cfname):
@@ -1187,7 +1186,7 @@ class Shell(cmd.Cmd):
         try:
             if header:
                 linesource.next()
-            layout = self.get_columnfamily_layout(ks, cf)
+            layout = self.get_table_meta(ks, cf)
             rownum = -1
             reader = csv.reader(linesource, **dialect_options)
             for rownum, row in enumerate(reader):

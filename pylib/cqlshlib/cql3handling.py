@@ -542,7 +542,7 @@ def get_cf_layout(ctxt, cass):
     if ks is not None:
         ks = dequote_name(ks)
     cf = dequote_name(ctxt.get_binding('cfname'))
-    return cass.get_columnfamily_layout(ks, cf)
+    return cass.get_table_meta(ks, cf)
 
 def working_on_keyspace(ctxt):
     wat = ctxt.get_binding('wat').upper()
