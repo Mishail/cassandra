@@ -62,7 +62,7 @@ try:
 except ImportError:
     pass
 
-CQL_LIB_PREFIX = 'cql-internal-only-'
+CQL_LIB_PREFIX = 'cql-internal-only-' #FIXME
 
 CASSANDRA_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
 
@@ -90,15 +90,13 @@ if cql_zip:
 try:
     import cassandra
 except ImportError, e:
-    sys.exit("\nPython CQL driver not installed, or not on PYTHONPATH.\n"
-             'You might try "easy_install cql".\n\n'
+    sys.exit("\nPython Cassandra driver not installed, or not on PYTHONPATH.\n"
+             'You might try "easy_install cassandra-driver".\n\n'
              'Python: %s\n'
              'Module load path: %r\n\n'
              'Error: %s\n' % (sys.executable, sys.path, e))
 
 from cassandra.cluster import Cluster
-#import cql.decoders TODO: cleanup
-#from cql.cursor import _VOID_DESCRIPTION
 from cassandra.cqltypes import ReversedType
 
 # cqlsh should run correctly when run out of a Cassandra source tree,
@@ -162,9 +160,14 @@ parser.add_option('--cqlversion', default=DEFAULT_CQLVER,
                   help='Specify a particular CQL version (default: %default).'
                        ' Examples: "3.0.3", "3.1.0"')
 
-#TODO: add all driver's exceptions
-CQL_ERRORS = (cassandra.AlreadyExists, cassandra.AuthenticationFailed, cassandra.InvalidRequest,
-        cassandra.Timeout, cassandra.Unauthorized, cassandra.OperationTimedOut, cassandra.cluster.NoHostAvailable)
+CQL_ERRORS = (
+    cassandra.AlreadyExists, cassandra.AuthenticationFailed, cassandra.InvalidRequest,
+    cassandra.Timeout, cassandra.Unauthorized, cassandra.OperationTimedOut,
+    cassandra.cluster.NoHostAvailable,
+    cassandra.connection.ConnectionBusy, cassandra.connection.ProtocolError, cassandra.connection.ConnectionException,
+    cassandra.decoder.ErrorMessage, cassandra.decoder.InternalError,
+    cassandra.query.InvalidParameterTypeError, cassandra.query.TraceUnavailable
+)
 
 debug_completion = bool(os.environ.get('CQLSH_DEBUG_COMPLETION', '') == 'YES')
 
@@ -1208,7 +1211,7 @@ class Shell(cmd.Cmd):
     def do_import_row(self, columns, nullval, layout, row):
         rowmap = {}
         for name, value in zip(columns, row):
-            type = layout.get_column(name).cqltype
+            type = layout.get_column(name).cqltype #FIXME
             if issubclass(type, ReversedType):
                 type = type.subtypes[0]
             cqltype = type.cql_parameterized_type()
