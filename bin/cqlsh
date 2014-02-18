@@ -542,7 +542,7 @@ class Shell(cmd.Cmd):
         # system.Versions['cql'] apparently does not reflect changes with
         # set_cql_version.
         vers['cql'] = self.cql_version
-        print "[cqlsh %(shver)s | Cassandra %(build)s | CQL spec %(cql)s | Thrift protocol %(thrift)s]" % vers
+        print "[cqlsh %(shver)s | Cassandra %(build)s | CQL spec %(cql)s | Native protocol v%(protocol)s]" % vers
 
     def show_session(self, sessionid):
         print_trace_session(self, self.session, sessionid)
@@ -551,7 +551,7 @@ class Shell(cmd.Cmd):
         result, = self.session.execute("select * from system.local where key = 'local'")
         vers = {
             'build': result.release_version,
-            'thrift': result.thrift_version,
+            'protocol': result.native_protocol_version,
             'cql': result.cql_version,
         }
         self.connection_versions = vers
