@@ -993,6 +993,13 @@ class Shell(cmd.Cmd):
     def print_recreate_keyspace(self, ksdef, out):
         ksname = self.cql_protect_name(ksdef.name)
         out.write(ksdef.as_cql_query())
+        out.write("\n\n")
+
+        uts = self.utypes_meta.get_usertypes_names(ksname)
+        if uts:
+            out.write("USE %s;\n\n" % ksname)
+            for ut in uts:
+                self.print_recreate_usertype(ksname, ut, out)
 
         cfs = self.get_columnfamily_names(ksname)
         if cfs:
