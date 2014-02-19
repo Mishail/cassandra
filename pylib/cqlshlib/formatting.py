@@ -251,7 +251,7 @@ def format_value_utype(val, encoding, colormap, time_format, float_precision, nu
     def format_field_name(name):
         return format_value_text(name, encoding=encoding, colormap=colormap, quote=False)
 
-    subs = [(format_field_name(k), format_field_value(v)) for (k, v) in val._asdict().items()]
+    subs = [(format_field_name(k), format_field_value(v)) for (k, v) in val._asdict().items() if v is not None]
     bval = '{' + ', '.join(k.strval + ': ' + v.strval for (k, v) in subs) + '}'
     lb, comma, colon, rb = [colormap['collection'] + s + colormap['reset']
                             for s in ('{', ', ', ': ', '}')]

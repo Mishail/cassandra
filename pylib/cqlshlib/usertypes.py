@@ -59,7 +59,11 @@ class UserType(CompositeType):
             result.append(col_type.from_binary(item))
             p += 1
 
-        return Result(*result) #FIXME the case when new fields were added
+        if len(result) < len(cls.subtypes):
+            nones = [None] * (len(cls.subtypes) - len(result))
+            result = result + nones
+
+        return Result(*result)
 
 
 
