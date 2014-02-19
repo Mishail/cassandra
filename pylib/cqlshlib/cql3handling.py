@@ -620,7 +620,7 @@ def select_order_column_completer(ctxt, cass):
         if not keyname:
             return [Hint("Can't ORDER BY here: need to specify partition key in WHERE clause")]
     layout = get_table_meta(ctxt, cass)
-    order_by_candidates = layout.clustering_key_columns[:]
+    order_by_candidates = [col.name for col in layout.clustering_key]
     if len(order_by_candidates) > len(prev_order_cols):
         return [maybe_escape_name(order_by_candidates[len(prev_order_cols)])]
     return [Hint('No more orderable columns here.')]
@@ -632,25 +632,25 @@ def relation_token_word_completer(ctxt, cass):
 @completer_for('relation', 'rel_tokname')
 def relation_token_subject_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
-    return [layout.partition_key_columns[0]]
+    return [key.name for key in layout.partition_key]
 
 @completer_for('relation', 'rel_lhs')
 def select_relation_lhs_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
-    filterable = set((layout.partition_key_columns[0], layout.clustering_key_columns[0]))
-    already_filtered_on = map(dequote_name, ctxt.get_binding('rel_lhs'))
-    for num in range(1, len(layout.partition_key_columns)):
-        if layout.partition_key_columns[num - 1] in already_filtered_on:
-            filterable.add(layout.partition_key_columns[num])
+    filterable = set((layout.partition_key[0].name, layout.clustering_key[0].name))
+    already_filtered_on = map(dequote_name, ctxt.get_binding('rel_lhs', ()))
+    for num in range(1, len(layout.partition_key)):
+        if layout.partition_key[num - 1].name in already_filtered_on:
+            filterable.add(layout.partition_key[num].name)
         else:
             break
-    for num in range(1, len(layout.clustering_key_columns)):
-        if layout.clustering_key_columns[num - 1] in already_filtered_on:
-            filterable.add(layout.clustering_key_columns[num])
+    for num in range(1, len(layout.clustering_key)):
+        if layout.clustering_key[num - 1].name in already_filtered_on:
+            filterable.add(layout.clustering_key[num].name)
         else:
             break
-    for cd in layout.columns:
-        if cd.index_name is not None:
+    for cd in layout.columns.values():
+        if cd.index:
             filterable.add(cd.name)
     return map(maybe_escape_name, filterable)
 
@@ -674,15 +674,23 @@ syntax_rules += r'''
                 ;
 '''
 
+def regular_column_names(table_meta):
+    if not table_meta or not table_meta.columns:
+        return []
+    regular_coulmns = list(set(table_meta.columns.keys())
+                           - set([key.name for key in table_meta.partition_key])
+                           - set([key.name for key in table_meta.clustering_key]))
+    return regular_coulmns
+
 @completer_for('insertStatement', 'colname')
 def insert_colname_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
     colnames = set(map(dequote_name, ctxt.get_binding('colname', ())))
-    keycols = layout.primary_key_columns
+    keycols = layout.primary_key
     for k in keycols:
-        if k not in colnames:
-            return [maybe_escape_name(k)]
-    normalcols = set(layout.regular_columns) - colnames
+        if k.name not in colnames:
+            return [maybe_escape_name(k.name)]
+    normalcols = set(regular_column_names(layout)) - colnames
     return map(maybe_escape_name, normalcols)
 
 @completer_for('insertStatement', 'newval')
@@ -693,7 +701,7 @@ def insert_newval_completer(ctxt, cass):
     if len(valuesdone) >= len(insertcols):
         return []
     curcol = insertcols[len(valuesdone)]
-    cqltype = layout.get_column(curcol).cqltype
+    cqltype = layout.columns[curcol].data_type
     coltype = cqltype.typename
     if coltype in ('map', 'set'):
         return ['{']
@@ -745,16 +753,16 @@ def insert_option_completer(ctxt, cass):
 @completer_for('assignment', 'updatecol')
 def update_col_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
-    return map(maybe_escape_name, layout.regular_columns)
+    return map(maybe_escape_name, regular_column_names(layout))
 
 @completer_for('assignment', 'update_rhs')
 def update_countername_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
-    cqltype = layout.get_column(curcol).cqltype
+    cqltype = layout.columns[curcol].data_type
     coltype = cqltype.typename
     if coltype == 'counter':
-        return maybe_escape_name(curcol)
+        return [maybe_escape_name(curcol)]
     if coltype in ('map', 'set'):
         return ["{"]
     if coltype == 'list':
@@ -765,14 +773,14 @@ def update_countername_completer(ctxt, cass):
 def update_counterop_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
-    return ['+', '-'] if layout.is_counter_col(curcol) else []
+    return ['+', '-'] if layout.columns[curcol].data_type.typename == 'counter' else []
 
 @completer_for('assignment', 'inc')
 def update_counter_inc_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
-    if layout.is_counter_col(curcol):
-        return Hint('<wholenumber>')
+    if layout.columns[curcol].data_type.typename == 'counter':
+        return [Hint('<wholenumber>')]
     return []
 
 @completer_for('assignment', 'listadder')
@@ -780,6 +788,7 @@ def update_listadder_completer(ctxt, cass):
     rhs = ctxt.get_binding('update_rhs')
     if rhs.startswith('['):
         return ['+']
+    return []
 
 @completer_for('assignment', 'listcol')
 def update_listcol_completer(ctxt, cass):
@@ -793,7 +802,7 @@ def update_listcol_completer(ctxt, cass):
 def update_indexbracket_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
     curcol = dequote_name(ctxt.get_binding('updatecol', ''))
-    coltype = layout.get_column(curcol).cqltype.typename
+    coltype = layout.columns[curcol].data_type.typename
     if coltype in ('map', 'list'):
         return ['[']
     return []
@@ -820,7 +829,7 @@ def delete_opt_completer(ctxt, cass):
 @completer_for('deleteSelector', 'delcol')
 def delete_delcol_completer(ctxt, cass):
     layout = get_table_meta(ctxt, cass)
-    return map(maybe_escape_name, layout.regular_columns) #FIXME
+    return map(maybe_escape_name, regular_column_names(layout))
 
 syntax_rules += r'''
 <batchStatement> ::= "BEGIN" ( "UNLOGGED" | "COUNTER" )? "BATCH"
@@ -1095,7 +1104,7 @@ syntax_rules += r'''
 '''
 
 @completer_for('username', 'name')
-def username_name_completer(ctxt, cass):
+def username_name_completer(ctxt, cass): #FIXME
     def maybe_quote(name):
         if CqlRuleSet.is_valid_cql3_name(name):
             return name
@@ -1105,9 +1114,8 @@ def username_name_completer(ctxt, cass):
     if ctxt.matched[0][0] == 'K_CREATE':
         return [Hint('<username>')]
 
-    cursor = cass.conn.cursor()
-    cursor.execute("LIST USERS")
-    return [maybe_quote(row[0].replace("'", "''")) for row in cursor.fetchall()]
+    session = cass.session
+    return [maybe_quote(row[0].replace("'", "''")) for row in session.execute("LIST USERS")]
 
 # END SYNTAX/COMPLETION RULE DEFINITIONS
 
