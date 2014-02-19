@@ -18,7 +18,8 @@ import re
 from .cqlhandling import CqlParsingRuleSet, Hint
 from . import helptopics
 
-simple_cql_types = set() #FIXME: add all types
+simple_cql_types = set(('ascii', 'bigint', 'blob', 'boolean', 'counter', 'decimal', 'double', 'float', 'inet', 'int',
+                       'text', 'timestamp', 'timeuuid', 'uuid', 'varchar', 'varint'))
 simple_cql_types.difference_update(('set', 'map', 'list'))
 
 cqldocs = helptopics.CQL3HelpTopics()
