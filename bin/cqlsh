@@ -508,6 +508,8 @@ class Shell(cmd.Cmd):
         self.refresh_utypes_meta()
         #UserTypes will use it to get theirs field names
         usertypes.get_field_names = lambda k, t: self.utypes_meta.get_field_names(k, t)
+        #Python driver returns BLOBs as string, but we expect them as buffer()
+        cassandra.cqltypes.BytesType.deserialize = staticmethod(cassandra.cqltypes.BytesType.validate)
 
     def set_expanded_cql_version(self, ver):
         ver, vertuple = full_cql_version(ver)
