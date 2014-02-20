@@ -1294,7 +1294,7 @@ class Shell(cmd.Cmd):
         clustering_key_columns = [col.name for col in table_meta.clustering_key]
         for name, value in zip(columns, row):
             type = table_meta.columns[name].data_type
-            cqltype = type.typestring
+            cqltype = table_meta.columns[name].typestring
 
             if value != nullval:
                 if cqltype in ('ascii', 'text', 'timestamp', 'inet'):
@@ -1314,7 +1314,7 @@ class Shell(cmd.Cmd):
         # Cassandra cql types do. Better just to submit them all as intact
         # CQL string literals and let Cassandra do its thing.
         query = 'INSERT INTO %s.%s (%s) VALUES (%s)' % (
-            self.cql_protect_name(table_meta.keyspace),
+            self.cql_protect_name(table_meta.keyspace.name),
             self.cql_protect_name(table_meta.name),
             ', '.join(self.cql_protect_names(rowmap.keys())),
             ', '.join(rowmap.values())
@@ -1354,20 +1354,17 @@ class Shell(cmd.Cmd):
                 self.printerr("Can't open %r for writing: %s" % (fname, e))
                 return 0
         try:
-            self.prep_export_dump(ks, cf, columns)
+            dump = self.prep_export_dump(ks, cf, columns)
             writer = csv.writer(csvdest, **dialect_options)
             if header:
-                writer.writerow([d[0] for d in self.session.description]) #FIXME
+                writer.writerow(columns)
             rows = 0
-            while True:
-                row = self.session.fetchone() #FIXME
-                if row is None:
-                    break
-                fmt = lambda v, t: \
-                    format_value(v, t, output_encoding=encoding, nullval=nullval,
+            for row in dump:
+                fmt = lambda v: \
+                    format_value(v, output_encoding=encoding, nullval=nullval,
                                  time_format=self.display_time_format,
                                  float_precision=self.display_float_precision).strval
-                writer.writerow(map(fmt, row, self.session.column_types)) #FIXME
+                writer.writerow(map(fmt, row))
                 rows += 1
         finally:
             if do_close:
@@ -1382,9 +1379,10 @@ class Shell(cmd.Cmd):
         # that the dump could be pretty easily aborted if necessary, but that
         # can be kind of tricky with cql3. Punt for now, until the real cursor
         # API is added in CASSANDRA-4415.
+        # https://datastax-oss.atlassian.net/browse/PYTHON-16
         query = 'SELECT %s FROM %s.%s LIMIT 99999999' \
                 % (columnlist, self.cql_protect_name(ks), self.cql_protect_name(cf))
-        self.session.execute(query)
+        return self.session.execute(query)
 
     def do_show(self, parsed):
         """
