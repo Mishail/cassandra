@@ -365,13 +365,9 @@ class UserTypeNotFound(Exception):
 class DecodeError(Exception):
     verb = 'decode'
 
-    def __init__(self, thebytes, err, expectedtype, colname=None):
+    def __init__(self, thebytes, err, colname=None):
         self.thebytes = thebytes
         self.err = err
-        #fixme
-        # if isinstance(expectedtype, type) and issubclass(expectedtype, CassandraType):
-        #     expectedtype = expectedtype.cql_parameterized_type()
-        self.expectedtype = expectedtype
         self.colname = colname
 
     def __str__(self):
@@ -381,8 +377,8 @@ class DecodeError(Exception):
         what = 'value %r' % (self.thebytes,)
         if self.colname is not None:
             what = 'value %r (for column %r)' % (self.thebytes, self.colname)
-        return 'Failed to %s %s as %s: %s' \
-               % (self.verb, what, self.expectedtype, self.err)
+        return 'Failed to %s %s : %s' \
+               % (self.verb, what, self.err)
 
     def __repr__(self):
         return '<%s %s>' % (self.__class__.__name__, self.message())
@@ -530,7 +526,7 @@ class Shell(cmd.Cmd):
                                 addcolor=self.color, time_format=self.display_time_format,
                                 float_precision=self.display_float_precision, **kwargs)
         except Exception, e:
-            err = FormatError(val, e, type(val))
+            err = FormatError(val, e)
             self.decoding_errors.append(err)
             return format_value(err, self.output_codec.name, addcolor=self.color)
 
