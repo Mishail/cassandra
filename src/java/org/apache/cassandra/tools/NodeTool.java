@@ -17,9 +17,7 @@
  */
 package org.apache.cassandra.tools;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.lang.management.MemoryUsage;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -60,8 +58,7 @@ import static com.google.common.collect.Lists.newArrayList;
 import static java.lang.Integer.parseInt;
 import static java.lang.String.format;
 import static org.apache.commons.lang3.ArrayUtils.EMPTY_STRING_ARRAY;
-import static org.apache.commons.lang3.StringUtils.EMPTY;
-import static org.apache.commons.lang3.StringUtils.join;
+import static org.apache.commons.lang3.StringUtils.*;
 
 public class NodeTool
 {
@@ -223,9 +220,20 @@ public class NodeTool
         @Option(type = OptionType.GLOBAL, name = {"-pw", "--password"}, description = "Remote jmx agent password")
         private String password = EMPTY;
 
+        @Option(type = OptionType.GLOBAL, name = {"-pwf", "--password-file"}, description = "Path to the JMX password file")
+        private String passwordFilePath = EMPTY;
+
         @Override
         public void run()
         {
+            if (isNotEmpty(username)) {
+                if (isNotEmpty(passwordFilePath))
+                    password = readUserPasswordFromFile(username, passwordFilePath);
+
+                if (isEmpty(password))
+                    password = promptAndReadPassword();
+            }
+
             try (NodeProbe probe = connect())
             {
                 execute(probe);
@@ -234,6 +242,44 @@ public class NodeTool
                 throw new RuntimeException("Error while closing JMX connection", e);
             }
 
+        }
+
+        private String readUserPasswordFromFile(String username, String passwordFilePath) {
+            String password = EMPTY;
+
+            File passwordFile = new File(passwordFilePath);
+            try (Scanner scanner = new Scanner(passwordFile).useDelimiter("\\s+"))
+            {
+                while (scanner.hasNextLine())
+                {
+                    if (scanner.hasNext())
+                    {
+                        String jmxRole = scanner.next();
+                        if (jmxRole.equals(username) && scanner.hasNext())
+                        {
+                            password = scanner.next();
+                            break;
+                        }
+                    }
+                    scanner.nextLine();
+                }
+            } catch (FileNotFoundException e)
+            {
+                throw new RuntimeException(e);
+            }
+
+            return password;
+        }
+
+        private String promptAndReadPassword()
+        {
+            String password = EMPTY;
+
+            Console console = System.console();
+            if (console != null)
+                password = String.valueOf(console.readPassword("Password:"));
+
+            return password;
         }
 
         protected abstract void execute(NodeProbe probe);
@@ -610,7 +656,7 @@ public class NodeTool
                 List<ColumnFamilyStoreMBean> columnFamilies = entry.getValue();
                 long keyspaceReadCount = 0;
                 long keyspaceWriteCount = 0;
-                int keyspacePendingTasks = 0;
+                int keyspacePendingFlushes = 0;
                 double keyspaceTotalReadTime = 0.0f;
                 double keyspaceTotalWriteTime = 0.0f;
 
@@ -631,7 +677,7 @@ public class NodeTool
                         keyspaceWriteCount += writeCount;
                         keyspaceTotalWriteTime += (long) probe.getColumnFamilyMetric(keyspaceName, cfName, "WriteTotalLatency");
                     }
-                    keyspacePendingTasks += (int) probe.getColumnFamilyMetric(keyspaceName, cfName, "PendingTasks");
+                    keyspacePendingFlushes += (long) probe.getColumnFamilyMetric(keyspaceName, cfName, "PendingFlushes");
                 }
 
                 double keyspaceReadLatency = keyspaceReadCount > 0
@@ -645,7 +691,7 @@ public class NodeTool
                 System.out.println("\tRead Latency: " + format("%s", keyspaceReadLatency) + " ms.");
                 System.out.println("\tWrite Count: " + keyspaceWriteCount);
                 System.out.println("\tWrite Latency: " + format("%s", keyspaceWriteLatency) + " ms.");
-                System.out.println("\tPending Tasks: " + keyspacePendingTasks);
+                System.out.println("\tPending Flushes: " + keyspacePendingFlushes);
 
                 // print out column family statistics for this keyspace
                 for (ColumnFamilyStoreMBean cfstore : columnFamilies)
@@ -684,7 +730,7 @@ public class NodeTool
                     System.out.println("\t\tSpace used by snapshots (total), bytes: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "SnapshotsSize"));
                     System.out.println("\t\tSSTable Compression Ratio: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "CompressionRatio"));
                     System.out.println("\t\tMemtable cell count: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "MemtableColumnsCount"));
-                    System.out.println("\t\tMemtable data size, bytes: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "MemtableDataSize"));
+                    System.out.println("\t\tMemtable data size, bytes: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "MemtableLiveDataSize"));
                     System.out.println("\t\tMemtable switch count: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "MemtableSwitchCount"));
                     System.out.println("\t\tLocal read count: " + ((JmxReporter.TimerMBean) probe.getColumnFamilyMetric(keyspaceName, cfName, "ReadLatency")).getCount());
                     double localReadLatency = ((JmxReporter.TimerMBean) probe.getColumnFamilyMetric(keyspaceName, cfName, "ReadLatency")).getMean() / 1000;
@@ -694,7 +740,7 @@ public class NodeTool
                     double localWriteLatency = ((JmxReporter.TimerMBean) probe.getColumnFamilyMetric(keyspaceName, cfName, "WriteLatency")).getMean() / 1000;
                     double localWLatency = localWriteLatency > 0 ? localWriteLatency : Double.NaN;
                     System.out.printf("\t\tLocal write latency: %01.3f ms%n", localWLatency);
-                    System.out.println("\t\tPending tasks: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "PendingTasks"));
+                    System.out.println("\t\tPending flushes: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "PendingFlushes"));
                     System.out.println("\t\tBloom filter false positives: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "BloomFilterFalsePositives"));
                     System.out.println("\t\tBloom filter false ratio: " + format("%01.5f", probe.getColumnFamilyMetric(keyspaceName, cfName, "RecentBloomFilterFalseRatio")));
                     System.out.println("\t\tBloom filter space used, bytes: " + probe.getColumnFamilyMetric(keyspaceName, cfName, "BloomFilterDiskSpaceUsed"));

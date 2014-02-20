@@ -1,3 +1,9 @@
+2.1.0-beta2
+ * Fix ABTC NPE (CASSANDRA-6692)
+ * Allow nodetool to use a file or prompt for password (CASSANDRA-6660)
+ * Fix AIOOBE when concurrently accessing ABSC (CASSANDRA-6742)
+
+
 2.1.0-beta1
  * Add flush directory distinct from compaction directories (CASSANDRA-6357)
  * Require JNA by default (CASSANDRA-6575)
@@ -55,7 +61,9 @@
  * Fix count(*) queries in a mixed cluster (CASSANDRA-6707)
  * Improve repair tasks(snapshot, differencing) concurrency (CASSANDRA-6566)
  * Fix replaying pre-2.0 commit logs (CASSANDRA-6714)
+ * Add static columns to CQL3 (CASSANDRA-6561)
 Merged from 1.2:
+ * Catch memtable flush exceptions during shutdown (CASSANDRA-6735)
  * Fix broken streams when replacing with same IP (CASSANDRA-6622)
  * Fix upgradesstables NPE for non-CF-based indexes (CASSANDRA-6645)
  * Fix partition and range deletes not triggering flush (CASSANDRA-6655)
@@ -67,6 +75,8 @@ Merged from 1.2:
  * IN on the last clustering columns + ORDER BY DESC yield no results (CASSANDRA-6701)
  * Fix SecondaryIndexManager#deleteFromIndexes() (CASSANDRA-6711)
  * Fix snapshot repair not snapshotting coordinator itself (CASSANDRA-6713)
+ * Support negative timestamps for CQL3 dates in query string (CASSANDRA-6718)
+ * Avoid NPEs when receiving table changes for an unknown keyspace (CASSANDRA-5631)
 
 
 2.0.5
