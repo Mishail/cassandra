@@ -457,15 +457,17 @@ class Shell(cmd.Cmd):
         cmd.Cmd.__init__(self, completekey=completekey)
         self.hostname = hostname
         self.port = port
-        self.username = username
-        self.password = password
+        self.auth_provider = None
+        if username and password:
+            self.auth_provider = lambda host: dict(username=username, password=password)
         self.keyspace = keyspace
         self.tracing_enabled = tracing_enabled
         self.expand_enabled = expand_enabled
         if use_conn:
             self.conn = use_conn
         else:
-            self.conn = Cluster(contact_points=(hostname,), port=port, cql_version=cqlver)
+            self.conn = Cluster(contact_points=(self.hostname,), port=self.port, cql_version=cqlver,
+                                auth_provider=self.auth_provider)
         self.set_expanded_cql_version(cqlver)
 
         if keyspace:

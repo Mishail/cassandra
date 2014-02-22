@@ -1104,7 +1104,7 @@ syntax_rules += r'''
 '''
 
 @completer_for('username', 'name')
-def username_name_completer(ctxt, cass): #FIXME
+def username_name_completer(ctxt, cass):
     def maybe_quote(name):
         if CqlRuleSet.is_valid_cql3_name(name):
             return name
