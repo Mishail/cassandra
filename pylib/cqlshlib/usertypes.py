@@ -35,7 +35,6 @@ class UserType(CompositeType):
         ksname = subtypes[0].cassname
         newname = subtypes[1].cassname.decode("hex")
         field_names = get_field_names(ksname, newname)
-        #assert len(field_names) == len(subtypes[2:]) #FIXME
         formatter_for(newname)(format_value_utype)
         return type(newname, (cls,), {'subtypes': subtypes[2:],
                                       'cassname': cls.cassname, 'typename': newname, 'fieldnames': field_names})
