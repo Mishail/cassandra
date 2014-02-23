@@ -30,10 +30,9 @@ exit 1
 ":"""
 
 from __future__ import with_statement
-from cassandra.query import SimpleStatement
 
 description = "CQL Shell for Apache Cassandra"
-version = "4.1.2"
+version = "4.2.1"
 
 from StringIO import StringIO
 from contextlib import contextmanager, closing
@@ -62,7 +61,8 @@ try:
 except ImportError:
     pass
 
-CQL_LIB_PREFIX = 'cql-internal-only-' #FIXME
+CQL_LIB_PREFIX = 'cassandra-driver-internal-only-'
+FUTURES_LIB_PREFIX = 'futures-'
 
 CASSANDRA_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
 
@@ -85,19 +85,23 @@ def find_zip(libprefix):
 cql_zip = find_zip(CQL_LIB_PREFIX)
 if cql_zip:
     ver = os.path.splitext(os.path.basename(cql_zip))[0][len(CQL_LIB_PREFIX):]
-    sys.path.insert(0, os.path.join(cql_zip, 'cql-' + ver))
+    sys.path.insert(0, os.path.join(cql_zip, 'cassandra-driver-' + ver))
+futures_zip = find_zip(FUTURES_LIB_PREFIX)
+if futures_zip:
+    sys.path.insert(0, futures_zip)
+
 
 try:
     import cassandra
 except ImportError, e:
     sys.exit("\nPython Cassandra driver not installed, or not on PYTHONPATH.\n"
-             'You might try "easy_install cassandra-driver".\n\n'
+             'You might try "pip install cassandra-driver".\n\n'
              'Python: %s\n'
              'Module load path: %r\n\n'
              'Error: %s\n' % (sys.executable, sys.path, e))
 
 from cassandra.cluster import Cluster
-from cassandra.cqltypes import ReversedType
+from cassandra.query import SimpleStatement
 
 # cqlsh should run correctly when run out of a Cassandra source tree,
 # out of an unpacked Cassandra tarball, and after a proper package install.
@@ -700,7 +704,7 @@ class Shell(cmd.Cmd):
                 return
             yield newline
 
-    def refresh_utypes_meta(self):
+    def refresh_utypes_meta(self): #FIXME try to listen
         try:
             self.utypes_meta = self.build_usertypes_meta()
         except Exception, e:

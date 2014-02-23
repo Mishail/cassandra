@@ -16,12 +16,13 @@
 
 import re
 from .cqlhandling import CqlParsingRuleSet, Hint
-from . import helptopics
+
 
 simple_cql_types = set(('ascii', 'bigint', 'blob', 'boolean', 'counter', 'decimal', 'double', 'float', 'inet', 'int',
-                       'text', 'timestamp', 'timeuuid', 'uuid', 'varchar', 'varint'))
+                        'text', 'timestamp', 'timeuuid', 'uuid', 'varchar', 'varint'))
 simple_cql_types.difference_update(('set', 'map', 'list'))
 
+from . import helptopics
 cqldocs = helptopics.CQL3HelpTopics()
 
 try:
