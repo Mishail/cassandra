@@ -314,8 +314,8 @@ class TestCqlshOutput(BaseTestCase):
              GGGGGGGGGGG   GGGGGGGGGGGGGGGGGGGG   GGGGGGGGGGGGGGGGGGGGGGGGGGG
              -2147483648 | -9223372036854775808 | -10000000000000000000000000
              GGGGGGGGGGG   GGGGGGGGGGGGGGGGGGGG   GGGGGGGGGGGGGGGGGGGGGGGGGGG
-                         |                      |
-             nnnnnnnnnnn   nnnnnnnnnnnnnnnnnnnn   nnnnnnnnnnnnnnnnnnnnnnnnnnn
+                    null |                 null |                        null
+             RRRRRRRRRRR   RRRRRRRRRRRRRRRRRRRR   RRRRRRRRRRRRRRRRRRRRRRRRRRR
 
 
             (5 rows)
@@ -337,8 +337,8 @@ class TestCqlshOutput(BaseTestCase):
              GGGGGGGGGGGGGGGG     GGGGGGG      GGGGG
              10.0000000000000 |   -1004.1 |    1e+08
              GGGGGGGGGGGGGGGG     GGGGGGG      GGGGG
-                              |           |
-             nnnnnnnnnnnnnnnn     nnnnnnn      nnnnn
+                         null |      null |     null
+             RRRRRRRRRRRRRRRR     RRRRRRR      RRRRR
 
 
             (5 rows)
