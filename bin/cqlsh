@@ -1033,7 +1033,7 @@ class Shell(cmd.Cmd):
 
     def describe_keyspaces(self):
         print
-        cmd.Cmd.columnize(self, self.get_keyspace_names())
+        cmd.Cmd.columnize(self, self.cql_protect_names(self.get_keyspace_names()))
         print
 
     def describe_keyspace(self, ksname):
@@ -1055,10 +1055,10 @@ class Shell(cmd.Cmd):
                 name = self.cql_protect_name(k.name)
                 print 'Keyspace %s' % (name,)
                 print '---------%s' % ('-' * len(name))
-                cmd.Cmd.columnize(self, self.get_columnfamily_names(k.name))
+                cmd.Cmd.columnize(self, self.cql_protect_names(self.get_columnfamily_names(k.name)))
                 print
         else:
-            cmd.Cmd.columnize(self, self.get_columnfamily_names(ksname))
+            cmd.Cmd.columnize(self, self.cql_protect_names(self.get_columnfamily_names(ksname)))
             print
 
     def describe_usertypes(self, ksname):
@@ -1068,10 +1068,10 @@ class Shell(cmd.Cmd):
                 name = self.cql_protect_name(k.name)
                 print 'Keyspace %s' % (name,)
                 print '---------%s' % ('-' * len(name))
-                cmd.Cmd.columnize(self, self.get_usertype_names(k.name))
+                cmd.Cmd.columnize(self, self.cql_protect_names(self.get_usertype_names(k.name)))
                 print
         else:
-            cmd.Cmd.columnize(self, self.get_usertype_names(ksname))
+            cmd.Cmd.columnize(self, self.cql_protect_names(self.get_usertype_names(ksname)))
             print
 
     def describe_usertype(self, ksname, typename):
