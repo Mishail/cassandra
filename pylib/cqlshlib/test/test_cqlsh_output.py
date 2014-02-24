@@ -589,7 +589,7 @@ class TestCqlshOutput(BaseTestCase):
             self.assertEqual(outputlines[2], 'cqlsh:system> ')
             midline = ColoredText(outputlines[1])
             self.assertEqual(midline.plain(),
-                             "Bad Request: Keyspace 'nonexistentkeyspace' does not exist")
+                             'code=2200 [Invalid query] message="Keyspace \'nonexistentkeyspace\' does not exist"')
             self.assertColorFromTags(midline,
                              "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR")
 
@@ -772,7 +772,7 @@ class TestCqlshOutput(BaseTestCase):
         with testrun_cqlsh(tty=True) as c:
             output = c.cmd_and_response('show version;')
             self.assertRegexpMatches(output,
-                    '^\[cqlsh \S+ \| Cassandra \S+ \| CQL spec \S+ \| Thrift protocol \S+\]$')
+                    '^\[cqlsh \S+ \| Cassandra \S+ \| CQL spec \S+ \| Native protocol \S+\]$')
 
             output = c.cmd_and_response('show host;')
             self.assertHasColors(output)
