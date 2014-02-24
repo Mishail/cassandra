@@ -16,6 +16,7 @@
 
 import re
 import time
+import calendar
 import math
 from collections import defaultdict
 from . import wcwidth
@@ -157,7 +158,7 @@ formatter_for('int')(format_integer_type)
 
 @formatter_for('date')
 def format_value_timestamp(val, colormap, time_format, quote=False, **_):
-    bval = strftime(time_format, val)
+    bval = strftime(time_format, calendar.timegm(val.utctimetuple()))
     if quote:
         bval = "'%s'" % bval
     return colorme(bval, colormap, 'timestamp')
