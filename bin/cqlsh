@@ -833,7 +833,7 @@ class Shell(cmd.Cmd):
         self.perform_statement(statement, with_default_limit=with_default_limit)
 
     def perform_statement(self, statement, with_default_limit=False):
-        stmt = SimpleStatement(statement, tracing_enabled=self.tracing_enabled, consistency_level=self.consistency_level)
+        stmt = SimpleStatement(statement, consistency_level=self.consistency_level)
         result = self.perform_simple_statement(stmt,
                                                 with_default_limit=with_default_limit)
         if self.tracing_enabled:
