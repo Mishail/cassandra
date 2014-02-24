@@ -200,7 +200,7 @@ class TestCqlshOutput(BaseTestCase):
             (1 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
         q = 'select COUNT(*) FROM twenty_rows_composite_table limit 1000000;'
         self.assertQueriesGiveColoredOutput((
@@ -216,7 +216,7 @@ class TestCqlshOutput(BaseTestCase):
             (1 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_static_cf_output(self):
         self.assertCqlverQueriesGiveColoredOutput((
@@ -236,7 +236,7 @@ class TestCqlshOutput(BaseTestCase):
             (3 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
         self.assertQueriesGiveColoredOutput((
             ('select * from dynamic_columns;', """
@@ -259,14 +259,14 @@ class TestCqlshOutput(BaseTestCase):
             (5 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_empty_cf_output(self):
         self.assertCqlverQueriesGiveColoredOutput((
             ('select * from empty_table;', """
             (0 rows)
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
         q = 'select * from has_all_types where num = 999;'
 
@@ -275,7 +275,7 @@ class TestCqlshOutput(BaseTestCase):
             (q, """
             (0 rows)
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_columnless_key_output(self):
         q = "select a from twenty_rows_table where a in ('1', '2', '-9192');"
@@ -295,7 +295,7 @@ class TestCqlshOutput(BaseTestCase):
             (2 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_numeric_output(self):
         self.assertCqlverQueriesGiveColoredOutput((
@@ -344,7 +344,7 @@ class TestCqlshOutput(BaseTestCase):
             (5 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_timestamp_output(self):
         self.assertQueriesGiveColoredOutput((
@@ -397,7 +397,7 @@ class TestCqlshOutput(BaseTestCase):
             (4 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_null_output(self):
         # column with metainfo but no values
@@ -416,7 +416,7 @@ class TestCqlshOutput(BaseTestCase):
             (2 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
         # all-columns, including a metainfo column has no values (cql3)
         self.assertQueriesGiveColoredOutput((
@@ -434,7 +434,7 @@ class TestCqlshOutput(BaseTestCase):
             (2 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_string_output_ascii(self):
         self.assertCqlverQueriesGiveColoredOutput((
@@ -458,7 +458,7 @@ class TestCqlshOutput(BaseTestCase):
             (5 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_string_output_utf8(self):
         # many of these won't line up visually here, to keep the source code
@@ -492,7 +492,7 @@ class TestCqlshOutput(BaseTestCase):
             (7 rows)
             nnnnnnnn
             """.encode('utf-8')),
-        ), cqlver=3, env={'LANG': 'en_US.UTF-8'})
+        ), cqlver="3.1.5", env={'LANG': 'en_US.UTF-8'})
 
     def test_blob_output(self):
         self.assertCqlverQueriesGiveColoredOutput((
@@ -514,7 +514,7 @@ class TestCqlshOutput(BaseTestCase):
             (4 rows)
             nnnnnnnn
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_colname_decoding_errors(self):
         # not clear how to achieve this situation in the first place. the
@@ -543,7 +543,7 @@ class TestCqlshOutput(BaseTestCase):
             Failed to decode value '\x00\xff\x00\xff' (for column 'utf8col') as text: 'utf8' codec can't decode byte 0xff in position 1: invalid start byte
             RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_key_decoding_errors(self):
         self.assertCqlverQueriesGiveColoredOutput((
@@ -563,10 +563,10 @@ class TestCqlshOutput(BaseTestCase):
             Failed to decode value '\x00\xff\x02\x8f' (for column 'pkey') as text: 'utf8' codec can't decode byte 0xff in position 1: invalid start byte
             RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR
             """),
-        ), cqlver=3)
+        ), cqlver="3.1.5")
 
     def test_prompt(self):
-        with testrun_cqlsh(tty=True, keyspace=None, cqlver=3) as c:
+        with testrun_cqlsh(tty=True, keyspace=None, cqlver="3.1.5") as c:
             self.assertEqual(c.output_header.splitlines()[-1], 'cqlsh> ')
 
             c.send('\n')
@@ -594,10 +594,10 @@ class TestCqlshOutput(BaseTestCase):
                              "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR")
 
     def test_describe_keyspace_output(self):
-        fullcqlver = '3.1.0'
+        fullcqlver = '3.1.5'
         with testrun_cqlsh(tty=True, cqlver=fullcqlver) as c:
             ks = get_test_keyspace()
-            qks = quote_name(fullcqlver, ks)
+            qks = quote_name(ks)
             for cmd in ('describe keyspace', 'desc keyspace'):
                 for givename in ('system', '', qks):
                     for semicolon in ('', ';'):
@@ -620,7 +620,7 @@ class TestCqlshOutput(BaseTestCase):
                 finally:
                     curs.execute('use system')
                     if do_drop:
-                        curs.execute('drop keyspace %s' % quote_name(fullcqlver, new_ks_name))
+                        curs.execute('drop keyspace %s' % quote_name(new_ks_name))
 
     def check_describe_keyspace_output(self, output, qksname, fullcqlver):
         expected_bits = [r'(?im)^CREATE KEYSPACE %s WITH\b' % re.escape(qksname),
@@ -671,7 +671,7 @@ class TestCqlshOutput(BaseTestCase):
 
         """)
 
-        with testrun_cqlsh(tty=True, cqlver='3.0.0') as c:
+        with testrun_cqlsh(tty=True, cqlver='3.1.5') as c:
             for cmdword in ('describe table', 'desc columnfamily'):
                 for semicolon in (';', ''):
                     output = c.cmd_and_response('%s has_all_types%s' % (cmdword, semicolon))
@@ -689,7 +689,7 @@ class TestCqlshOutput(BaseTestCase):
 
         ks = get_test_keyspace()
 
-        with testrun_cqlsh(tty=True, keyspace=None, cqlver=3) as c:
+        with testrun_cqlsh(tty=True, keyspace=None, cqlver="3.1.5") as c:
 
             # when not in a keyspace
             for cmdword in ('DESCRIBE COLUMNFAMILIES', 'desc tables'):
@@ -708,10 +708,10 @@ class TestCqlshOutput(BaseTestCase):
                             self.assertIn('ascii_with_invalid_and_special_chars', cfnames)
 
                     self.assertIn('system', ksnames)
-                    self.assertIn(quote_name('3.0.0', ks), ksnames)
+                    self.assertIn(quote_name(ks), ksnames)
 
             # when in a keyspace
-            c.send('USE %s;\n' % quote_name('3.0.0', ks))
+            c.send('USE %s;\n' % quote_name(ks))
             c.read_to_next_prompt()
 
             for cmdword in ('DESCRIBE COLUMNFAMILIES', 'desc tables'):
@@ -720,7 +720,7 @@ class TestCqlshOutput(BaseTestCase):
                     self.assertNoHasColors(output)
                     self.assertEqual(output[0], '\n')
                     self.assertEqual(output[-1], '\n')
-                    self.assertNotIn('Keyspace %s' % quote_name('3.0.0', ks), output)
+                    self.assertNotIn('Keyspace %s' % quote_name(ks), output)
                     self.assertIn('has_value_encoding_errors', output)
                     self.assertIn('undefined_values_table', output)
 
@@ -742,7 +742,7 @@ class TestCqlshOutput(BaseTestCase):
             \n
         '''
 
-        with testrun_cqlsh(tty=True, keyspace=None, cqlver=3) as c:
+        with testrun_cqlsh(tty=True, keyspace=None, cqlver="3.1.5") as c:
 
             # not in a keyspace
             for semicolon in ('', ';'):
@@ -750,7 +750,7 @@ class TestCqlshOutput(BaseTestCase):
                 self.assertNoHasColors(output)
                 self.assertRegexpMatches(output, output_re + '$')
 
-            c.send('USE %s;\n' % quote_name('3.0.0', get_test_keyspace()))
+            c.send('USE %s;\n' % quote_name(get_test_keyspace()))
             c.read_to_next_prompt()
 
             for semicolon in ('', ';'):

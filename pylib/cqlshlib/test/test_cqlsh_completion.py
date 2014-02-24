@@ -56,6 +56,7 @@ class CqlshCompletionCase(BaseTestCase):
         self.cqlsh.send(inputstring)
         self.cqlsh.send(TAB)
         completed = self.cqlsh.read_up_to_timeout(COMPLETION_RESPONSE_TIME)
+        completed = completed.replace(' \b', '')
         self.assertEqual(completed[:len(inputstring)], inputstring)
         completed = completed[len(inputstring):]
         completed = completed.replace(BEL, '')
