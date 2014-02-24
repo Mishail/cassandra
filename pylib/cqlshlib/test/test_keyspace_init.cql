@@ -58,7 +58,6 @@ CREATE TABLE has_value_encoding_errors (
 );
 
 INSERT INTO has_value_encoding_errors (pkey, utf8col) VALUES ('A', 0x00ff00ff);
-ALTER TABLE has_value_encoding_errors ALTER utf8col TYPE text;
 
 CREATE TABLE has_key_encoding_errors (
     pkey blob PRIMARY KEY,
@@ -66,8 +65,6 @@ CREATE TABLE has_key_encoding_errors (
 );
 
 INSERT INTO has_key_encoding_errors (pkey, col) VALUES (0x00ff028f, 'whatever');
-ALTER TABLE has_key_encoding_errors ALTER pkey TYPE text;
-
 
 
 CREATE TABLE empty_table (
@@ -145,8 +142,6 @@ INSERT INTO ascii_with_invalid_and_special_chars (k, val) VALUES (2, 0x000102030
 INSERT INTO ascii_with_invalid_and_special_chars (k, val) VALUES (3, 0xfeff62797465206f72646572206d61726b);
 -- "fake special chars\\x00\\n"
 INSERT INTO ascii_with_invalid_and_special_chars (k, val) VALUES (4, 0x66616b65207370656369616c2063686172735c7830305c6e);
-
-ALTER TABLE ascii_with_invalid_and_special_chars ALTER val TYPE ascii;
 
 
 

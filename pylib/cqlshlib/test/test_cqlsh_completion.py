@@ -33,7 +33,7 @@ TAB = '\t'
 # isn't coming
 COMPLETION_RESPONSE_TIME = 0.5
 
-completion_separation_re = re.compile(r'\s\s+')
+completion_separation_re = re.compile(r'\s+')
 
 class CqlshCompletionCase(BaseTestCase):
     def setUp(self):
@@ -91,7 +91,7 @@ class CqlshCompletionCase(BaseTestCase):
         return self.module.CqlRuleSet.replication_strategies
 
 class TestCqlshCompletion(CqlshCompletionCase):
-    cqlver = '3.1.0'
+    cqlver = '3.1.5'
     module = cqlsh.cql3handling
 
     def test_complete_on_empty_string(self):

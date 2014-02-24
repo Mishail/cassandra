@@ -609,7 +609,7 @@ class TestCqlshOutput(BaseTestCase):
             # new keyspace name
             new_ks_name = 'COPY_OF_' + ks
             copy_desc = desc.replace(ks, new_ks_name)
-            statements = split_cql_commands(copy_desc, cqlver=fullcqlver)
+            statements = split_cql_commands(copy_desc)
             do_drop = True
 
             with cassandra_cursor(cql_version=fullcqlver) as curs:
