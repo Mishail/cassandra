@@ -129,7 +129,7 @@ OLD_HISTORY = os.path.expanduser(os.path.join('~', '.cqlsh_history'))
 if os.path.exists(OLD_HISTORY):
     os.rename(OLD_HISTORY, HISTORY)
 
-DEFAULT_HOST = 'localhost'
+DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 9042
 DEFAULT_CQLVER = '3.1.5'
 
@@ -1084,7 +1084,7 @@ class Shell(cmd.Cmd):
     def describe_cluster(self):
         print '\nCluster: %s' % self.get_cluster_name()
         p = trim_if_present(self.get_partitioner(), 'org.apache.cassandra.dht.')
-        print 'Partitioner: %s' % p
+        print 'Partitioner: %s\n' % p
         # TODO: snitch?
         #snitch = trim_if_present(self.get_snitch(), 'org.apache.cassandra.locator.')
         #print 'Snitch: %s\n' % snitch

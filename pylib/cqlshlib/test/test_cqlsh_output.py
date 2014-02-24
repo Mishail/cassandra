@@ -730,7 +730,6 @@ class TestCqlshOutput(BaseTestCase):
             \n
             Cluster: [ ] (?P<clustername> .* ) \n
             Partitioner: [ ] (?P<partitionername> .* ) \n
-            Snitch: [ ] (?P<snitchname> .* ) \n
             \n
         '''
 
