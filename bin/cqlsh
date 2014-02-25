@@ -1005,11 +1005,11 @@ class Shell(cmd.Cmd):
             for ut in uts:
                 self.print_recreate_usertype(ksname, ut, out)
 
-        cfs = self.get_columnfamily_names(ksname)
+        cfs = self.get_columnfamily_names(ksdef.name)
         if cfs:
             for cf in cfs:
                 out.write('\n')
-                self.print_recreate_columnfamily(ksname, cf, out)
+                self.print_recreate_columnfamily(ksdef.name, cf, out)
 
     def print_recreate_usertype(self, ksname, utname, out):
         layout = self.get_usertype_layout(ksname, utname)
