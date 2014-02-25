@@ -763,7 +763,7 @@ class TestCqlshOutput(BaseTestCase):
                 output = c.cmd_and_response('desc full schema' + semicolon)
                 self.assertNoHasColors(output)
                 self.assertRegexpMatches(output, '^\nCREATE KEYSPACE')
-                self.assertIn("\nCREATE KEYSPACE system WITH REPLICATION = {'class': 'LocalStrategy'}  AND DURABLE_WRITES = true;\n",
+                self.assertIn("\nCREATE KEYSPACE system WITH replication = {'class': 'LocalStrategy'}  AND durable_writes = true;\n",
                               output)
                 self.assertRegexpMatches(output, ';\s*$')
 
