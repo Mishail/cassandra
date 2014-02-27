@@ -109,7 +109,7 @@ cqlshlibdir = os.path.join(CASSANDRA_PATH, 'pylib')
 if os.path.isdir(cqlshlibdir):
     sys.path.insert(0, cqlshlibdir)
 
-from cqlshlib import cqlhandling, cql3handling, pylexotron, usertypes
+from cqlshlib import cqlhandling, cql3handling, pylexotron, usertypes, sslhandling
 from cqlshlib.displaying import (RED, BLUE, ANSI_RESET, COLUMN_NAME_COLORS,
                                  FormattedValue, colorme)
 from cqlshlib.formatting import format_by_type
@@ -154,6 +154,7 @@ parser.add_option("-C", "--color", action='store_true', dest='color',
                   help='Always use color output')
 parser.add_option("--no-color", action='store_false', dest='color',
                   help='Never use color output')
+parser.add_option('--ssl', action='store_true', help='Use SSL', default=False)
 parser.add_option("-u", "--username", help="Authenticate as user.")
 parser.add_option("-p", "--password", help="Authenticate using password.")
 parser.add_option('-k', '--keyspace', help='Authenticate to the given keyspace.')
@@ -456,7 +457,8 @@ class Shell(cmd.Cmd):
                  cqlver=DEFAULT_CQLVER, keyspace=None,
                  tracing_enabled=False, expand_enabled=False,
                  display_time_format=DEFAULT_TIME_FORMAT,
-                 display_float_precision=DEFAULT_FLOAT_PRECISION):
+                 display_float_precision=DEFAULT_FLOAT_PRECISION,
+                 ssl=False):
         cmd.Cmd.__init__(self, completekey=completekey)
         self.hostname = hostname
         self.port = port
@@ -470,7 +472,8 @@ class Shell(cmd.Cmd):
             self.conn = use_conn
         else:
             self.conn = Cluster(contact_points=(self.hostname,), port=self.port, cql_version=cqlver,
-                                auth_provider=self.auth_provider)
+                                auth_provider=self.auth_provider,
+                                ssl_options=sslhandling.ssl_settings(hostname, CONFIG_FILE) if ssl else None)
         self.set_expanded_cql_version(cqlver)
 
         if keyspace:
@@ -1753,6 +1756,8 @@ def read_options(cmdlineargs, environment):
                                                     DEFAULT_FLOAT_PRECISION)
     optvalues.debug = False
     optvalues.file = None
+    optvalues.ssl = False
+
     optvalues.tty = sys.stdin.isatty()
     optvalues.cqlversion = option_with_default(configs.get, 'cql', 'version', DEFAULT_CQLVER)
 
@@ -1851,7 +1856,8 @@ def main(options, hostname, port):
                       cqlver=options.cqlversion,
                       keyspace=options.keyspace,
                       display_time_format=options.time_format,
-                      display_float_precision=options.float_precision)
+                      display_float_precision=options.float_precision,
+                      ssl=options.ssl)
     except KeyboardInterrupt:
         sys.exit('Connection aborted.')
     except CQL_ERRORS, e:
