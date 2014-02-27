@@ -21,6 +21,7 @@ import math
 from collections import defaultdict
 from . import wcwidth
 from .displaying import colorme, FormattedValue, DEFAULT_VALUE_COLORS
+from cassandra.cqltypes import EMPTY
 
 unicode_controlchars_re = re.compile(r'[\x00-\x31\x7f-\xa0]')
 controlchars_re = re.compile(r'[\x00-\x31\x7f-\xff]')
@@ -96,8 +97,8 @@ def format_value_default(val, colormap, **_):
 _formatters = {}
 
 def format_value(type, val, **kwargs):
-    if val is None:
-        return format_value_default(val, **kwargs)
+    if val == EMPTY:
+        return format_value_default('', **kwargs)
     formatter = _formatters.get(type.__name__, format_value_default)
     return formatter(val, **kwargs)
 
