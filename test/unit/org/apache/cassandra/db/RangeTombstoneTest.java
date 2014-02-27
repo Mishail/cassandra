@@ -26,6 +26,7 @@ import org.apache.cassandra.utils.memory.AbstractAllocator;
 import org.junit.Test;
 
 import com.google.common.collect.ImmutableMap;
+import org.apache.commons.collections.CollectionUtils;
 
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.config.ColumnDefinition;
@@ -109,6 +110,107 @@ public class RangeTombstoneTest extends SchemaLoader
             assert isLive(cf, cf.getColumn(b(i))) : "Cell " + i + " should be live";
         for (int i : new int[]{ 10, 12, 14, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27 })
             assert !isLive(cf, cf.getColumn(b(i))) : "Cell " + i + " shouldn't be live";
+    }
+
+    @Test
+    public void rangeTombstoneFilteringTest() throws Exception
+    {
+        CompactionManager.instance.disableAutoCompaction();
+        Keyspace keyspace = Keyspace.open(KSNAME);
+        ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(CFNAME);
+
+        // Inserting data
+        String key = "k111";
+        Mutation rm;
+        ColumnFamily cf;
+
+        rm = new Mutation(KSNAME, ByteBufferUtil.bytes(key));
+        for (int i = 0; i < 40; i += 2)
+            add(rm, i, 0);
+        rm.apply();
+
+        rm = new Mutation(KSNAME, ByteBufferUtil.bytes(key));
+        cf = rm.addOrGet(CFNAME);
+        delete(cf, 5, 10, 1);
+        rm.apply();
+
+        rm = new Mutation(KSNAME, ByteBufferUtil.bytes(key));
+        cf = rm.addOrGet(CFNAME);
+        delete(cf, 15, 20, 2);
+        rm.apply();
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(11), b(14), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        Collection<RangeTombstone> rt = rangeTombstones(cf);
+        assertEquals(0, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(11), b(15), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(20), b(25), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(12), b(25), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(25), b(35), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(0, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(1), b(40), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(2, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(7), b(17), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(2, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(5), b(20), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(2, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(5), b(15), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(2, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(1), b(2), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(0, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(1), b(5), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(1), b(10), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(5), b(6), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(17), b(20), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        cf = cfs.getColumnFamily(QueryFilter.getSliceFilter(dk(key), CFNAME, b(17), b(18), false, Integer.MAX_VALUE, System.currentTimeMillis()));
+        rt = rangeTombstones(cf);
+        assertEquals(1, rt.size());
+
+        ColumnSlice[] slices = new ColumnSlice[]{new ColumnSlice( b(1), b(10)), new ColumnSlice( b(16), b(20))};
+        IDiskAtomFilter sqf = new SliceQueryFilter(slices, false, Integer.MAX_VALUE);
+        cf = cfs.getColumnFamily( new QueryFilter(dk(key), CFNAME, sqf, System.currentTimeMillis()) );
+        rt = rangeTombstones(cf);
+        assertEquals(2, rt.size());
+    }
+
+    private Collection<RangeTombstone> rangeTombstones(ColumnFamily cf)
+    {
+        List <RangeTombstone> res = new ArrayList<RangeTombstone>();
+        CollectionUtils.addAll(res, cf.deletionInfo().rangeIterator());
+        return res;
     }
 
     @Test
@@ -341,19 +443,16 @@ public class RangeTombstoneTest extends SchemaLoader
 
         cfs.forceBlockingFlush();
 
-        // We should have 2 updates to the indexed "1" column
-        assertEquals(2, index.inserts.size());
+        // We should have 1 insert and 1 update to the indexed "1" column
+        // CASSANDRA-6640 changed index update to just update, not insert then delete
+        assertEquals(1, index.inserts.size());
+        assertEquals(1, index.updates.size());
 
         CompactionManager.instance.performMaximal(cfs);
 
-        // verify that the "1" indexed column removed from the index twice:
-        // the first time by processing the RT, the second time by the
-        // re-indexing caused by the second insertion. This second write
-        // deletes from the 2i because the original column was still in the
-        // main cf's memtable (shadowed by the RT). One thing we're checking
-        // for here is that there wasn't an additional, bogus delete issued
-        // to the 2i (CASSANDRA-6517)
-        assertEquals(2, index.deletes.size());
+        // verify that the "1" indexed column removed from the index
+        // After CASSANDRA-6640, deletion only happens once
+        assertEquals(1, index.deletes.size());
     }
 
     private void runCompactionWithRangeTombstoneAndCheckSecondaryIndex() throws Exception
@@ -435,11 +534,13 @@ public class RangeTombstoneTest extends SchemaLoader
     {
         public List<Cell> inserts = new ArrayList<>();
         public List<Cell> deletes = new ArrayList<>();
+        public List<Cell> updates = new ArrayList<>();
 
         public void resetCounts()
         {
             inserts.clear();
             deletes.clear();
+            updates.clear();
         }
 
         public void delete(ByteBuffer rowKey, Cell col, OpOrder.Group opGroup)
@@ -452,7 +553,10 @@ public class RangeTombstoneTest extends SchemaLoader
             inserts.add(col);
         }
 
-        public void update(ByteBuffer rowKey, Cell oldCol, Cell col, OpOrder.Group opGroup){}
+        public void update(ByteBuffer rowKey, Cell oldCol, Cell col, OpOrder.Group opGroup)
+        {
+            updates.add(col);
+        }
 
         public void init(){}
 
