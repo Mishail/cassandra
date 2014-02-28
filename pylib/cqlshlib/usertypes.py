@@ -19,22 +19,14 @@ from cassandra.cqltypes import CompositeType
 import collections
 from formatting import formatter_for, format_value_utype
 
-
-def get_field_names(ks_name, ut_name):
-    """
-    UserTypes will use this function to get its fields names from Shell's utypes_dict
-    """
-    return []
-
-
 class UserType(CompositeType):
     typename = "'org.apache.cassandra.db.marshal.UserType'"
 
     @classmethod
-    def apply_parameters(cls, *subtypes):
-        ksname = subtypes[0].cassname
+    def apply_parameters(cls, subtypes, names):
         newname = subtypes[1].cassname.decode("hex")
-        field_names = get_field_names(ksname, newname)
+        field_names = [encoded_name.decode("hex") for encoded_name in names[2:]]
+        assert len(field_names) == len(subtypes[2:])
         formatter_for(newname)(format_value_utype)
         return type(newname, (cls,), {'subtypes': subtypes[2:],
                                       'cassname': cls.cassname, 'typename': newname, 'fieldnames': field_names})
