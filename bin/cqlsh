@@ -102,6 +102,7 @@ except ImportError, e:
 
 from cassandra.cluster import Cluster
 from cassandra.query import SimpleStatement
+from cassandra.policies import WhiteListRoundRobinPolicy
 
 # cqlsh should run correctly when run out of a Cassandra source tree,
 # out of an unpacked Cassandra tarball, and after a proper package install.
@@ -472,7 +473,8 @@ class Shell(cmd.Cmd):
         else:
             self.conn = Cluster(contact_points=(self.hostname,), port=self.port, cql_version=cqlver,
                                 auth_provider=self.auth_provider,
-                                ssl_options=sslhandling.ssl_settings(hostname, CONFIG_FILE) if ssl else None)
+                                ssl_options=sslhandling.ssl_settings(hostname, CONFIG_FILE) if ssl else None,
+                                load_balancing_policy=WhiteListRoundRobinPolicy([self.hostname]))
         self.set_expanded_cql_version(cqlver)
 
         if keyspace:
