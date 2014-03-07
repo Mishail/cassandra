@@ -66,7 +66,7 @@ public class HintedHandOffTest extends SchemaLoader
         Mutation rm = new Mutation(KEYSPACE4, ByteBufferUtil.bytes(1));
         rm.add(STANDARD1_CF, Util.cellname(COLUMN1), ByteBufferUtil.EMPTY_BYTE_BUFFER, System.currentTimeMillis());
 
-        HintedHandOffManager.instance.hintFor(rm, HintedHandOffManager.calculateHintTTL(rm), UUID.randomUUID()).apply();
+        HintedHandOffManager.instance.insertHintFor(rm, HintedHandOffManager.calculateHintTTL(rm), UUID.randomUUID());
 
         // flush data to disk
         hintStore.forceBlockingFlush();
@@ -105,7 +105,7 @@ public class HintedHandOffTest extends SchemaLoader
         Mutation rm = new Mutation(KEYSPACE4, ByteBufferUtil.bytes(1));
         rm.add(STANDARD1_CF, Util.cellname(COLUMN1), ByteBufferUtil.EMPTY_BYTE_BUFFER, System.currentTimeMillis());
 
-        HintedHandOffManager.instance.hintFor(rm, HintedHandOffManager.calculateHintTTL(rm), UUID.randomUUID()).apply();
+        HintedHandOffManager.instance.insertHintFor(rm, HintedHandOffManager.calculateHintTTL(rm), UUID.randomUUID());
 
         assert getNoOfHints() == 1;
 

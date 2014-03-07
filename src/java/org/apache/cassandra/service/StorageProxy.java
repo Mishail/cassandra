@@ -916,7 +916,7 @@ public class StorageProxy implements StorageProxyMBean
         assert ttl > 0;
         UUID hostId = StorageService.instance.getTokenMetadata().getHostId(target);
         assert hostId != null : "Missing host ID for " + target.getHostAddress();
-        HintedHandOffManager.instance.hintFor(mutation, ttl, hostId).apply();
+        HintedHandOffManager.instance.insertHintFor(mutation, ttl, hostId);
         StorageMetrics.totalHints.inc();
     }
 

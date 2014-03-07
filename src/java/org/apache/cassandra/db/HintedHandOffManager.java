@@ -26,34 +26,32 @@ import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.RateLimiter;
 import com.google.common.util.concurrent.Uninterruptibles;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
-import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.config.Schema;
+import org.apache.cassandra.cql3.QueryOptions;
+import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.cql3.UntypedResultSet;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.composites.Composites;
 import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.filter.*;
 import org.apache.cassandra.db.marshal.Int32Type;
-import org.apache.cassandra.db.marshal.UUIDType;
-import org.apache.cassandra.dht.IPartitioner;
-import org.apache.cassandra.dht.Range;
-import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.exceptions.RequestExecutionException;
+import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.FailureDetector;
@@ -98,7 +96,6 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
     private static final Logger logger = LoggerFactory.getLogger(HintedHandOffManager.class);
     private static final int PAGE_SIZE = 128;
-    private static final int LARGE_NUMBER = 65536; // 64k nodes ought to be enough for anybody.
 
     public final HintedHandoffMetrics metrics = new HintedHandoffMetrics();
 
@@ -121,7 +118,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
      * Returns a mutation representing a Hint to be sent to <code>targetId</code>
      * as soon as it becomes available again.
      */
-    public Mutation hintFor(Mutation mutation, int ttl, UUID targetId)
+    public void insertHintFor(Mutation mutation, int ttl, UUID targetId)
     {
         assert ttl > 0;
 
@@ -133,12 +130,31 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
             logger.warn("Unable to find matching endpoint for target {} when storing a hint", targetId);
 
         UUID hintId = UUIDGen.getTimeUUID();
-        // serialize the hint with id and version as a composite column name
-        CellName name = CFMetaData.HintsCf.comparator.makeCellName(hintId, MessagingService.current_version);
-        ByteBuffer value = ByteBuffer.wrap(FBUtilities.serialize(mutation, Mutation.serializer, MessagingService.current_version));
-        ColumnFamily cf = ArrayBackedSortedColumns.factory.create(Schema.instance.getCFMetaData(Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF));
-        cf.addColumn(name, value, System.currentTimeMillis(), ttl);
-        return new Mutation(Keyspace.SYSTEM_KS, UUIDType.instance.decompose(targetId), cf);
+        try
+        {
+            QueryProcessor.process(
+                    String.format("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, ?, ?, ?) USING TTL ?",
+                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
+                    QueryState.forInternalCalls(),
+                    new QueryOptions(ConsistencyLevel.ONE,
+                        Lists.newArrayList(
+                                ByteBufferUtil.bytes(targetId),
+                                ByteBufferUtil.bytes(hintId),
+                                ByteBufferUtil.bytes(MessagingService.current_version),
+                                ByteBuffer.wrap(FBUtilities.serialize(mutation, Mutation.serializer, MessagingService.current_version)),
+                                ByteBufferUtil.bytes(ttl)
+                        )
+                   )
+           );
+        }
+        catch (RequestValidationException e)
+        {
+            throw new AssertionError(e); // not supposed to happen
+        }
+        catch (RequestExecutionException e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 
     /*
@@ -204,10 +220,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
     {
         if (!StorageService.instance.getTokenMetadata().isMember(endpoint))
             return;
-        UUID hostId = StorageService.instance.getTokenMetadata().getHostId(endpoint);
-        ByteBuffer hostIdBytes = ByteBuffer.wrap(UUIDGen.decompose(hostId));
-        final Mutation mutation = new Mutation(Keyspace.SYSTEM_KS, hostIdBytes);
-        mutation.delete(SystemKeyspace.HINTS_CF, System.currentTimeMillis());
+        final UUID hostId = StorageService.instance.getTokenMetadata().getHostId(endpoint);
 
         // execute asynchronously to avoid blocking caller (which may be processing gossip)
         Runnable runnable = new Runnable()
@@ -217,7 +230,8 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 try
                 {
                     logger.info("Deleting any stored hints for {}", endpoint);
-                    mutation.apply();
+                    QueryProcessor.processInternal(String.format("DELETE FROM %s.%s WHERE target_id = %s", 
+                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF, hostId));
                     compact();
                 }
                 catch (Exception e)
@@ -518,14 +532,11 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         if (logger.isDebugEnabled())
           logger.debug("Started scheduleAllDeliveries");
 
-        IPartitioner p = StorageService.getPartitioner();
-        RowPosition minPos = p.getMinimumToken().minKeyBound();
-        Range<RowPosition> range = new Range<RowPosition>(minPos, minPos, p);
-        IDiskAtomFilter filter = new NamesQueryFilter(ImmutableSortedSet.<CellName>of());
-        List<Row> rows = hintStore.getRangeSlice(range, null, filter, Integer.MAX_VALUE, System.currentTimeMillis());
-        for (Row row : rows)
+        UntypedResultSet result = QueryProcessor.processInternal(
+                String.format("SELECT DISTINCT target_id FROM %s.%s", Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF));
+        for (UntypedResultSet.Row row : result)
         {
-            UUID hostId = UUIDGen.getUUID(row.key.key);
+            UUID hostId = row.getUUID("target_id");
             InetAddress target = StorageService.instance.getTokenMetadata().getEndpointForHostId(hostId);
             // token may have since been removed (in which case we have just read back a tombstone)
             if (target != null)
@@ -577,46 +588,13 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
     public List<String> listEndpointsPendingHints()
     {
-        Token.TokenFactory tokenFactory = StorageService.getPartitioner().getTokenFactory();
-
         // Extract the keys as strings to be reported.
         LinkedList<String> result = new LinkedList<String>();
-        for (Row row : getHintsSlice(1))
+        for (UntypedResultSet.Row row : QueryProcessor.processInternal(
+                String.format("SELECT DISTINCT TOKEN(target_id) AS ttoken from %s.%s", Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF)))
         {
-            if (row.cf != null) //ignore removed rows
-                result.addFirst(tokenFactory.toString(row.key.token));
+            result.addFirst(row.getString("ttoken"));
         }
         return result;
     }
-
-    private List<Row> getHintsSlice(int columnCount)
-    {
-        // Get count # of columns...
-        SliceQueryFilter predicate = new SliceQueryFilter(ColumnSlice.ALL_COLUMNS_ARRAY,
-                                                          false,
-                                                          columnCount);
-
-        // From keys "" to ""...
-        IPartitioner<?> partitioner = StorageService.getPartitioner();
-        RowPosition minPos = partitioner.getMinimumToken().minKeyBound();
-        Range<RowPosition> range = new Range<RowPosition>(minPos, minPos);
-
-        try
-        {
-            RangeSliceCommand cmd = new RangeSliceCommand(Keyspace.SYSTEM_KS,
-                                                          SystemKeyspace.HINTS_CF,
-                                                          System.currentTimeMillis(),
-                                                          predicate,
-                                                          range,
-                                                          null,
-                                                          LARGE_NUMBER);
-            return StorageProxy.getRangeSlice(cmd, ConsistencyLevel.ONE);
-        }
-        catch (Exception e)
-        {
-            logger.info("HintsCF getEPPendingHints timed out.");
-            throw new RuntimeException(e);
-        }
-    }
-
 }
