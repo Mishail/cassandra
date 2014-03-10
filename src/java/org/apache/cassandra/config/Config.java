@@ -104,6 +104,7 @@ public class Config
 
     public Boolean start_rpc = true;
     public String rpc_address;
+    public String broadcast_rpc_address;
     public Integer rpc_port = 9160;
     public Integer rpc_listen_backlog = 50;
     public String rpc_server_type = "sync";
@@ -194,7 +195,6 @@ public class Config
     public volatile int counter_cache_keys_to_save = Integer.MAX_VALUE;
 
     public String memory_allocator = NativeAllocator.class.getSimpleName();
-    public boolean populate_io_cache_on_flush = false;
 
     private static boolean isClientMode = false;
 
@@ -274,7 +274,6 @@ public class Config
         periodic,
         batch
     }
-
     public static enum InternodeCompression
     {
         all, none, dc

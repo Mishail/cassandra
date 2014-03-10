@@ -637,7 +637,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         getTokenMetadata().updateHostId(SystemKeyspace.getLocalHostId(), FBUtilities.getBroadcastAddress());
         appStates.put(ApplicationState.NET_VERSION, valueFactory.networkVersion());
         appStates.put(ApplicationState.HOST_ID, valueFactory.hostId(SystemKeyspace.getLocalHostId()));
-        appStates.put(ApplicationState.RPC_ADDRESS, valueFactory.rpcaddress(DatabaseDescriptor.getRpcAddress()));
+        appStates.put(ApplicationState.RPC_ADDRESS, valueFactory.rpcaddress(DatabaseDescriptor.getBroadcastRpcAddress()));
         appStates.put(ApplicationState.RELEASE_VERSION, valueFactory.releaseVersion());
         logger.info("Starting up server gossip");
         Gossiper.instance.register(this);
@@ -1049,7 +1049,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     public String getRpcaddress(InetAddress endpoint)
     {
         if (endpoint.equals(FBUtilities.getBroadcastAddress()))
-            return DatabaseDescriptor.getRpcAddress().getHostAddress();
+            return DatabaseDescriptor.getBroadcastRpcAddress().getHostAddress();
         else if (Gossiper.instance.getEndpointStateForEndpoint(endpoint).getApplicationState(ApplicationState.RPC_ADDRESS) == null)
             return endpoint.getHostAddress();
         else
@@ -2577,9 +2577,23 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                     return;
                 }
 
-                Set<InetAddress> neighbours = new HashSet<>();
+                Set<InetAddress> allNeighbors = new HashSet<>();
+                Map<Range, Set<InetAddress>> rangeToNeighbors = new HashMap<>();
                 for (Range<Token> range : ranges)
-                    neighbours.addAll(ActiveRepairService.getNeighbors(keyspace, range, dataCenters, hosts));
+                {
+                    try
+                    {
+                        Set<InetAddress> neighbors = ActiveRepairService.getNeighbors(keyspace, range, dataCenters, hosts);
+                        rangeToNeighbors.put(range, neighbors);
+                        allNeighbors.addAll(neighbors);
+                    }
+                    catch (IllegalArgumentException e)
+                    {
+                        logger.error("Repair failed:", e);
+                        sendNotification("repair", message, new int[]{cmd, ActiveRepairService.Status.FINISHED.ordinal()});
+                        return;
+                    }
+                }
 
                 List<ColumnFamilyStore> columnFamilyStores = new ArrayList<>();
                 for (ColumnFamilyStore cfs : getValidColumnFamilies(false, false, keyspace, columnFamilies))
@@ -2587,22 +2601,12 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
                 UUID parentSession = null;
                 if (!fullRepair)
-                    parentSession = ActiveRepairService.instance.prepareForRepair(neighbours, ranges, columnFamilyStores);
+                    parentSession = ActiveRepairService.instance.prepareForRepair(allNeighbors, ranges, columnFamilyStores);
 
                 List<RepairFuture> futures = new ArrayList<>(ranges.size());
                 for (Range<Token> range : ranges)
                 {
-                    RepairFuture future;
-                    try
-                    {
-                        future = forceKeyspaceRepair(parentSession, range, keyspace, isSequential, neighbours, columnFamilies);
-                    }
-                    catch (IllegalArgumentException e)
-                    {
-                        logger.error("Repair session failed:", e);
-                        sendNotification("repair", message, new int[]{cmd, ActiveRepairService.Status.SESSION_FAILED.ordinal()});
-                        continue;
-                    }
+                    RepairFuture future = forceKeyspaceRepair(parentSession, range, keyspace, isSequential, rangeToNeighbors.get(range), columnFamilies);
                     if (future == null)
                         continue;
                     futures.add(future);
@@ -2642,7 +2646,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                     }
                 }
                 if (!fullRepair)
-                    ActiveRepairService.instance.finishParentSession(parentSession, neighbours);
+                    ActiveRepairService.instance.finishParentSession(parentSession, allNeighbors);
                 sendNotification("repair", String.format("Repair command #%d finished", cmd), new int[]{cmd, ActiveRepairService.Status.FINISHED.ordinal()});
             }
         }, null);

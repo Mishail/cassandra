@@ -892,8 +892,8 @@ syntax_rules += r'''
                     ;
 
 <compositeKeyCfSpec> ::= [newcolname]=<cident> <simpleStorageType>
-                         "," [newcolname]=<cident> <storageType>
-                         ( "," [newcolname]=<cident> <storageType> )*
+                         "," [newcolname]=<cident> <storageType> ( "static" )?
+                         ( "," [newcolname]=<cident> <storageType> ( "static" )? )*
                          "," "PRIMARY" k="KEY" p="(" ( partkey=<pkDef> | [pkey]=<cident> )
                                                      ( c="," [pkey]=<cident> )* ")"
                        ;
@@ -1011,7 +1011,7 @@ syntax_rules += r'''
                                <alterInstructions>
                         ;
 <alterInstructions> ::= "ALTER" existcol=<cident> "TYPE" <storageType>
-                      | "ADD" newcol=<cident> <storageType>
+                      | "ADD" newcol=<cident> <storageType> ("static")?
                       | "DROP" existcol=<cident>
                       | "WITH" <cfamProperty> ( "AND" <cfamProperty> )*
                       | "RENAME" existcol=<cident> "TO" newcol=<cident>
