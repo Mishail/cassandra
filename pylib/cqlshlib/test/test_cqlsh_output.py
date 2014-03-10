@@ -624,9 +624,8 @@ class TestCqlshOutput(BaseTestCase):
 
     def check_describe_keyspace_output(self, output, qksname, fullcqlver):
         expected_bits = [r'(?im)^CREATE KEYSPACE %s WITH\b' % re.escape(qksname),
-                         r'(?im)^USE \S+;$',
                          r';\s*$',
-                         r'\breplication = {\n  \'class\':']
+                         r'\breplication = {\'class\':']
         for expr in expected_bits:
             self.assertRegexpMatches(output, expr)
 
@@ -637,39 +636,37 @@ class TestCqlshOutput(BaseTestCase):
         # note columns are now comparator-ordered instead of original-order.
         table_desc3 = dedent("""
 
-            CREATE TABLE has_all_types (
-              num int,
-              asciicol ascii,
-              bigintcol bigint,
-              blobcol blob,
-              booleancol boolean,
-              decimalcol decimal,
-              doublecol double,
-              floatcol float,
-              intcol int,
-              textcol text,
-              timestampcol timestamp,
-              uuidcol uuid,
-              varcharcol text,
-              varintcol varint,
-              PRIMARY KEY (num)
-            ) WITH
-              bloom_filter_fp_chance=0.010000 AND
-              caching='KEYS_ONLY' AND
-              comment='' AND
-              dclocal_read_repair_chance=0.000000 AND
-              gc_grace_seconds=864000 AND
-              min_index_interval=128 AND
-              max_index_interval=2048 AND
-              read_repair_chance=0.100000 AND
-              populate_io_cache_on_flush='false' AND
-              default_time_to_live=0 AND
-              speculative_retry='NONE' AND
-              memtable_flush_period_in_ms=0 AND
-              compaction={'class': 'SizeTieredCompactionStrategy'} AND
-              compression={'sstable_compression': 'LZ4Compressor'};
+            CREATE TABLE %s.has_all_types (
+                num int PRIMARY KEY,
+                asciicol ascii,
+                bigintcol bigint,
+                blobcol blob,
+                booleancol boolean,
+                decimalcol decimal,
+                doublecol double,
+                floatcol float,
+                intcol int,
+                textcol text,
+                timestampcol timestamp,
+                uuidcol uuid,
+                varcharcol text,
+                varintcol varint
+            ) WITH bloom_filter_fp_chance = 0.01
+                AND caching = 'KEYS_ONLY'
+                AND comment = ''
+                AND compaction = {'min_threshold': '4', 'class': 'org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy', 'max_threshold': '32'}
+                AND compression = {'sstable_compression': 'org.apache.cassandra.io.compress.LZ4Compressor'}
+                AND default_time_to_live = 0
+                AND gc_grace_seconds = 864000
+                AND max_index_interval = 2048
+                AND memtable_flush_period_in_ms = 0
+                AND min_index_interval = 128
+                AND populate_io_cache_on_flush = false
+                AND read_repair_chance = 0.1
+                AND rows_per_partition_to_cache = '100'
+                AND speculative_retry = '99.0PERCENTILE';
 
-        """)
+        """ % quote_name(get_test_keyspace()))
 
         with testrun_cqlsh(tty=True, cqlver='3.1.5') as c:
             for cmdword in ('describe table', 'desc columnfamily'):
