@@ -103,6 +103,7 @@ except ImportError, e:
 from cassandra.cluster import Cluster
 from cassandra.query import SimpleStatement
 from cassandra.policies import WhiteListRoundRobinPolicy
+from cassandra.metadata import protect_name, protect_names, protect_value
 
 # cqlsh should run correctly when run out of a Cassandra source tree,
 # out of an unpacked Cassandra tarball, and after a proper package install.
@@ -965,17 +966,6 @@ class Shell(cmd.Cmd):
     def set_prompt(self, prompt):
         self.prompt = prompt
 
-    def cql_protect_name(self, name):
-        if isinstance(name, unicode):
-            name = name.encode('utf8')
-        return cqlruleset.maybe_escape_name(name)
-
-    def cql_protect_names(self, names):
-        return map(self.cql_protect_name, names)
-
-    def cql_protect_value(self, value):
-        return cqlruleset.escape_value(value)
-
     def cql_unprotect_name(self, namestr):
         if namestr is None:
             return
@@ -986,7 +976,7 @@ class Shell(cmd.Cmd):
             return cqlruleset.dequote_value(valstr)
 
     def print_recreate_keyspace(self, ksdef, out):
-        ksname = self.cql_protect_name(ksdef.name)
+        ksname = protect_name(ksdef.name)
         out.write(ksdef.as_cql_query())
         out.write("\n\n")
 
@@ -1024,7 +1014,7 @@ class Shell(cmd.Cmd):
 
     def describe_keyspaces(self):
         print
-        cmd.Cmd.columnize(self, self.cql_protect_names(self.get_keyspace_names()))
+        cmd.Cmd.columnize(self, protect_names(self.get_keyspace_names()))
         print
 
     def describe_keyspace(self, ksname):
@@ -1043,26 +1033,26 @@ class Shell(cmd.Cmd):
         print
         if ksname is None:
             for k in self.get_keyspaces():
-                name = self.cql_protect_name(k.name)
+                name = protect_name(k.name)
                 print 'Keyspace %s' % (name,)
                 print '---------%s' % ('-' * len(name))
-                cmd.Cmd.columnize(self, self.cql_protect_names(self.get_columnfamily_names(k.name)))
+                cmd.Cmd.columnize(self, protect_names(self.get_columnfamily_names(k.name)))
                 print
         else:
-            cmd.Cmd.columnize(self, self.cql_protect_names(self.get_columnfamily_names(ksname)))
+            cmd.Cmd.columnize(self, protect_names(self.get_columnfamily_names(ksname)))
             print
 
     def describe_usertypes(self, ksname):
         print
         if ksname is None:
             for k in self.get_keyspaces():
-                name = self.cql_protect_name(k.name)
+                name = protect_name(k.name)
                 print 'Keyspace %s' % (name,)
                 print '---------%s' % ('-' * len(name))
-                cmd.Cmd.columnize(self, self.cql_protect_names(self.get_usertype_names(k.name)))
+                cmd.Cmd.columnize(self, protect_names(self.get_usertype_names(k.name)))
                 print
         else:
-            cmd.Cmd.columnize(self, self.cql_protect_names(self.get_usertype_names(ksname)))
+            cmd.Cmd.columnize(self, protect_names(self.get_usertype_names(ksname)))
             print
 
     def describe_usertype(self, ksname, typename):
@@ -1295,7 +1285,7 @@ class Shell(cmd.Cmd):
 
             if value != nullval:
                 if cqltype in ('ascii', 'text', 'timestamp', 'inet'):
-                    rowmap[name] = self.cql_protect_value(value)
+                    rowmap[name] = protect_value(value)
                 else:
                     rowmap[name] = value
             elif name in clustering_key_columns and not type.empty_binary_ok:
@@ -1311,9 +1301,9 @@ class Shell(cmd.Cmd):
         # Cassandra cql types do. Better just to submit them all as intact
         # CQL string literals and let Cassandra do its thing.
         query = 'INSERT INTO %s.%s (%s) VALUES (%s)' % (
-            self.cql_protect_name(table_meta.keyspace.name),
-            self.cql_protect_name(table_meta.name),
-            ', '.join(self.cql_protect_names(rowmap.keys())),
+            protect_name(table_meta.keyspace.name),
+            protect_name(table_meta.name),
+            ', '.join(protect_names(rowmap.keys())),
             ', '.join(rowmap.values())
         )
         if self.debug:
@@ -1371,14 +1361,14 @@ class Shell(cmd.Cmd):
     def prep_export_dump(self, ks, cf, columns):
         if columns is None:
             columns = self.get_column_names(ks, cf)
-        columnlist = ', '.join(self.cql_protect_names(columns))
+        columnlist = ', '.join(protect_names(columns))
         # this limit is pretty awful. would be better to use row-key-paging, so
         # that the dump could be pretty easily aborted if necessary, but that
         # can be kind of tricky with cql3. Punt for now, until the real cursor
         # API is added in CASSANDRA-4415.
         # https://datastax-oss.atlassian.net/browse/PYTHON-16
         query = 'SELECT %s FROM %s.%s LIMIT 99999999' \
-                % (columnlist, self.cql_protect_name(ks), self.cql_protect_name(cf))
+                % (columnlist, protect_name(ks), protect_name(cf))
         return self.session.execute(query)
 
     def do_show(self, parsed):

@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
 from .cqlhandling import CqlParsingRuleSet, Hint
+from cassandra.metadata import maybe_escape_name
+from cassandra.metadata import escape_name
 
 
 simple_cql_types = set(('ascii', 'bigint', 'blob', 'boolean', 'counter', 'decimal', 'double', 'float', 'inet', 'int',
@@ -94,6 +95,10 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
         'SERIAL'
     )
 
+    maybe_escape_name = staticmethod(maybe_escape_name)
+
+    escape_name = staticmethod(escape_name)
+
     @classmethod
     def escape_value(cls, value):
         if value is None:
@@ -105,26 +110,6 @@ class Cql3ParsingRuleSet(CqlParsingRuleSet):
         elif isinstance(value, int):
             return str(value)
         return "'%s'" % value.replace("'", "''")
-
-    @staticmethod
-    def escape_name(name):
-        return '"%s"' % name.replace('"', '""')
-
-    valid_cql3_word_re = re.compile(r'^[a-z][0-9a-z_]*$')
-
-    @classmethod
-    def is_valid_cql3_name(cls, s):
-        if s is None:
-            return False
-        if s.lower() in cls.keywords - cls.unreserved_keywords:
-            return False
-        return cls.valid_cql3_word_re.match(s) is not None
-
-    @classmethod
-    def maybe_escape_name(cls, name):
-        if cls.is_valid_cql3_name(name):
-            return name
-        return cls.escape_name(name)
 
     @staticmethod
     def dequote_name(name):
@@ -149,7 +134,7 @@ CqlRuleSet = Cql3ParsingRuleSet()
 # convenience for remainder of module
 shorthands = ('completer_for', 'explain_completion',
               'dequote_value', 'dequote_name',
-              'escape_value', 'escape_name',
+              'escape_value',
               'maybe_escape_name')
 
 for shorthand in shorthands:
