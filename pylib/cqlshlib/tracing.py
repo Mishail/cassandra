@@ -17,13 +17,12 @@
 from cqlshlib.displaying import MAGENTA
 from datetime import datetime
 import time
+from cassandra.query import QueryTrace
 
-TRACING_KS = 'system_traces'
-SESSIONS_CF = 'sessions'
-EVENTS_CF = 'events'
 
 def print_trace_session(shell, session, session_id):
-    rows = fetch_trace_session(session, session_id)
+    trace = QueryTrace(session_id, session)
+    rows = fetch_trace_session(trace)
     if not rows:
         shell.printerr("Session %s wasn't found." % session_id)
         return
@@ -39,39 +38,30 @@ def print_trace_session(shell, session, session_id):
     shell.print_formatted_result(formatted_names, formatted_values)
     shell.writeresult('')
 
-def fetch_trace_session(session, session_id):
-    traces = session.execute("SELECT request, coordinator, started_at, duration "
-                   "FROM %s.%s "
-                   "WHERE session_id = %s" % (TRACING_KS, SESSIONS_CF, session_id))
-    if not traces:
+
+def fetch_trace_session(trace):
+    trace.populate()
+    if not trace.events:
         return []
 
-    trace = traces[0]
-
-    events = session.execute("SELECT activity, event_id, source, source_elapsed "
-                   "FROM %s.%s "
-                   "WHERE session_id = %s" % (TRACING_KS, EVENTS_CF, session_id))
-
-    # append header row (from sessions table).
-    rows = [[trace.request, str(datetime_from_utc_to_local(trace.started_at)), trace.coordinator, 0]]
+    rows = [[trace.request_type, str(datetime_from_utc_to_local(trace.started_at)), trace.coordinator, 0]]
 
     # append main rows (from events table).
-    for event in events:
-        rows.append([event.activity, str(format_timeuuid(event.event_id)), event.source, event.source_elapsed])
+    for event in trace.events:
+        rows.append(["%s [%s]" % (event.description, event.thread_name),
+                     str(datetime_from_utc_to_local(event.datetime)),
+                     event.source,
+                     event.source_elapsed.microseconds])
     # append footer row (from sessions table).
     if trace.duration:
-        from datetime import timedelta
-        finished_at = str(datetime_from_utc_to_local(trace.started_at) + timedelta(microseconds=trace.duration))
+        finished_at = (datetime_from_utc_to_local(trace.started_at) + trace.duration)
     else:
         finished_at = trace.duration = "--"
 
-    rows.append(['Request complete', finished_at, trace.coordinator, trace.duration])
+    rows.append(['Request complete', str(finished_at), trace.coordinator, trace.duration.microseconds])
 
     return rows
 
-def format_timeuuid(value):
-    from datetime import datetime
-    return datetime.fromtimestamp((value.get_time() - 0x01b21dd213814000L)*100/1e9)
 
 def datetime_from_utc_to_local(utc_datetime):
     now_timestamp = time.time()

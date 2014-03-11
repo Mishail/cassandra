@@ -30,6 +30,7 @@ exit 1
 ":"""
 
 from __future__ import with_statement
+from uuid import UUID
 
 description = "CQL Shell for Apache Cassandra"
 version = "4.2.1"
@@ -1400,7 +1401,7 @@ class Shell(cmd.Cmd):
             self.show_host()
         elif showwhat.startswith('session'):
             session_id = parsed.get_binding('sessionid').lower()
-            self.show_session(session_id)
+            self.show_session(UUID(session_id))
         else:
             self.printerr('Wait, how do I show %r?' % (showwhat,))
 
