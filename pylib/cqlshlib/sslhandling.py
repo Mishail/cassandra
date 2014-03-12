@@ -64,7 +64,15 @@ def ssl_settings(host, config_file, env=os.environ):
     if not ssl_certfile is None:
         ssl_certfile = os.path.expanduser(ssl_certfile)
 
+    userkey = get_option('ssl', 'userkey')
+    if userkey:
+        userkey = os.path.expanduser(userkey)
+    usercert = get_option('ssl', 'usercert')
+    if usercert:
+        usercert = os.path.expanduser(usercert)
+
     return dict(ca_certs=ssl_certfile,
                 cert_reqs=ssl.CERT_REQUIRED if ssl_validate else ssl.CERT_NONE,
-                ssl_version=ssl.PROTOCOL_TLSv1)
+                ssl_version=ssl.PROTOCOL_TLSv1,
+                keyfile=userkey, certfile=usercert)
 
