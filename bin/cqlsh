@@ -33,7 +33,7 @@ from __future__ import with_statement
 from uuid import UUID
 
 description = "CQL Shell for Apache Cassandra"
-version = "4.2.1"
+version = "5.0.0"
 
 from StringIO import StringIO
 from contextlib import contextmanager, closing
