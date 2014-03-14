@@ -27,7 +27,6 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.Test;
-
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -40,10 +39,12 @@ import org.apache.cassandra.utils.FBUtilities;
 
 import com.google.common.collect.Iterators;
 
+import static org.hamcrest.CoreMatchers.is;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
 import static org.apache.cassandra.cql3.QueryProcessor.processInternal;
 
-public class HintedHandOffTest extends SchemaLoader
+public class HintedHandOffManagerTest extends SchemaLoader
 {
 
     public static final String KEYSPACE4 = "Keyspace4";
@@ -107,7 +108,7 @@ public class HintedHandOffTest extends SchemaLoader
 
         HintedHandOffManager.instance.insertHintFor(rm, HintedHandOffManager.calculateHintTTL(rm), UUID.randomUUID());
 
-        assert getNoOfHints() == 1;
+        assertThat(getNoOfHints(), is(1));
 
         HintedHandOffManager.instance.truncateAllHints();
 
@@ -116,7 +117,7 @@ public class HintedHandOffTest extends SchemaLoader
             Thread.sleep(100);
         }
 
-        assert getNoOfHints() == 0;
+        assertThat(getNoOfHints(), is(0));
     }
 
     private int getNoOfHints()

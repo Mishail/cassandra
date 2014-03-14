@@ -129,17 +129,15 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         else
             logger.warn("Unable to find matching endpoint for target {} when storing a hint", targetId);
 
-        UUID hintId = UUIDGen.getTimeUUID();
         try
         {
             QueryProcessor.process(
-                    String.format("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, ?, ?, ?) USING TTL ?",
+                    String.format("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?",
                             Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
                     QueryState.forInternalCalls(),
                     new QueryOptions(ConsistencyLevel.ONE,
                         Lists.newArrayList(
                                 ByteBufferUtil.bytes(targetId),
-                                ByteBufferUtil.bytes(hintId),
                                 ByteBufferUtil.bytes(MessagingService.current_version),
                                 ByteBuffer.wrap(FBUtilities.serialize(mutation, Mutation.serializer, MessagingService.current_version)),
                                 ByteBufferUtil.bytes(ttl)
@@ -243,7 +241,6 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         StorageService.optionalTasks.submit(runnable);
     }
 
-    //foobar
     public void truncateAllHints() throws ExecutionException, InterruptedException
     {
         Runnable runnable = new Runnable()
@@ -269,7 +266,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
     protected Future<?> compact()
     {
         hintStore.forceBlockingFlush();
-        ArrayList<Descriptor> descriptors = new ArrayList<Descriptor>();
+        ArrayList<Descriptor> descriptors = new ArrayList<>();
         for (SSTable sstable : hintStore.getSSTables())
             descriptors.add(sstable.descriptor);
         return CompactionManager.instance.submitUserDefined(hintStore, descriptors, (int) (System.currentTimeMillis() / 1000));
@@ -358,7 +355,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         // find the hints for the node using its token.
         UUID hostId = Gossiper.instance.getHostId(endpoint);
         logger.info("Started hinted handoff for host: {} with IP: {}", hostId, endpoint);
-        final ByteBuffer hostIdBytes = ByteBuffer.wrap(UUIDGen.decompose(hostId));
+        final ByteBuffer hostIdBytes = ByteBufferUtil.bytes(hostId);
         DecoratedKey epkey =  StorageService.getPartitioner().decorateKey(hostIdBytes);
 
         final AtomicInteger rowsReplayed = new AtomicInteger(0);
@@ -529,8 +526,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
      */
     private void scheduleAllDeliveries()
     {
-        if (logger.isDebugEnabled())
-          logger.debug("Started scheduleAllDeliveries");
+        logger.debug("Started scheduleAllDeliveries");
 
         UntypedResultSet result = QueryProcessor.processInternal(
                 String.format("SELECT DISTINCT target_id FROM %s.%s", Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF));
@@ -543,8 +539,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 scheduleHintDelivery(target);
         }
 
-        if (logger.isDebugEnabled())
-          logger.debug("Finished scheduleAllDeliveries");
+        logger.debug("Finished scheduleAllDeliveries");
     }
 
     /*
