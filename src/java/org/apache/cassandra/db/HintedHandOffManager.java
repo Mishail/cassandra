@@ -47,12 +47,10 @@ import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.cql3.UntypedResultSet.Row;
+import org.apache.cassandra.cql3.statements.DeleteStatement;
+import org.apache.cassandra.cql3.statements.SelectStatement;
 import org.apache.cassandra.db.compaction.CompactionManager;
-import org.apache.cassandra.db.composites.CellName;
-import org.apache.cassandra.db.composites.Composite;
-import org.apache.cassandra.db.composites.Composites;
-import org.apache.cassandra.db.filter.QueryFilter;
-import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
 import org.apache.cassandra.exceptions.WriteTimeoutException;
@@ -67,6 +65,8 @@ import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.service.QueryState;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.service.WriteResponseHandler;
+import org.apache.cassandra.service.pager.PagingState;
+import org.apache.cassandra.transport.messages.ResultMessage;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.cliffc.high_scale_lib.NonBlockingHashSet;
@@ -129,25 +129,35 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
     /**
      * DELETE from hints USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?
      */
-    private final CQLStatement deleteHint;
+    private final DeleteStatement deleteHint;
     
     /**
      * INSERT INTO hints (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?
      */
     private final CQLStatement insertHint;
     
+    /**
+     * "SELECT target_id, hint_id, message_version, mutation, WRITETIME(mutation), TTL(mutation) FROM hints WHERE target_id = ?"
+     */
+    private final SelectStatement selectHints;
+    
     public HintedHandOffManager()
     {
         super();
         try
         {
-            deleteHint = QueryProcessor.parseStatement(
+            deleteHint = (DeleteStatement) QueryProcessor.parseStatement(
                     String.format("DELETE from %s.%s USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?", 
                             Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
                     QueryState.forInternalCalls());
             
             insertHint = QueryProcessor.parseStatement(
                     String.format("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?", 
+                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
+                    QueryState.forInternalCalls());
+            
+            selectHints = (SelectStatement) QueryProcessor.parseStatement(
+                    String.format("SELECT target_id, hint_id, message_version, mutation, WRITETIME(mutation) as tstamp, TTL(mutation) as ttl FROM %s.%s WHERE target_id = ?", 
                             Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
                     QueryState.forInternalCalls());
         }
@@ -233,7 +243,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         StorageService.optionalTasks.scheduleWithFixedDelay(runnable, 10, 10, TimeUnit.MINUTES);
     }
 
-    private void deleteHint(ByteBuffer tokenBytes, CellName columnName, long timestamp)
+    private void deleteHint(Row hint)
     {
         try
         {
@@ -241,10 +251,10 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                     QueryState.forInternalCalls(),
                     new QueryOptions(ConsistencyLevel.ONE,
                             Lists.newArrayList(
-                                    ByteBufferUtil.bytes(timestamp),
-                                    tokenBytes,
-                                    columnName.get(0),
-                                    columnName.get(1)
+                                    hint.getBytes("tstamp"),
+                                    hint.getBytes("target_id"),
+                                    hint.getBytes("hint_id"),
+                                    hint.getBytes("message_version")
                                     )
                     )
             );
@@ -331,13 +341,6 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         return CompactionManager.instance.submitUserDefined(hintStore, descriptors, (int) (System.currentTimeMillis() / 1000));
     }
 
-    private static boolean pagingFinished(ColumnFamily hintColumnFamily, Composite startColumn)
-    {
-        // done if no hints found or the start column (same as last column processed in previous iteration) is the only one
-        return hintColumnFamily == null
-               || (hintColumnFamily.getSortedColumns().size() == 1 && hintColumnFamily.getColumn((CellName)startColumn) != null);
-    }
-
     private int waitForSchemaAgreement(InetAddress endpoint) throws TimeoutException
     {
         Gossiper gossiper = Gossiper.instance;
@@ -371,7 +374,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         return waited;
     }
 
-    private void deliverHintsToEndpoint(InetAddress endpoint)
+    private void deliverHintsToEndpoint(InetAddress endpoint) throws RequestExecutionException, RequestValidationException
     {
         if (hintStore.isEmpty())
             return; // nothing to do, don't confuse users by logging a no-op handoff
@@ -409,16 +412,14 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
      * 4. Force a flush
      * 5. Do major compaction to clean up all deletes etc.
      */
-    private void doDeliverHintsToEndpoint(InetAddress endpoint)
+    private void doDeliverHintsToEndpoint(InetAddress endpoint) throws RequestExecutionException, RequestValidationException
     {
         // find the hints for the node using its token.
-        UUID hostId = Gossiper.instance.getHostId(endpoint);
+        final UUID hostId = Gossiper.instance.getHostId(endpoint);
         logger.info("Started hinted handoff for host: {} with IP: {}", hostId, endpoint);
         final ByteBuffer hostIdBytes = ByteBufferUtil.bytes(hostId);
-        DecoratedKey epkey =  StorageService.getPartitioner().decorateKey(hostIdBytes);
 
         final AtomicInteger rowsReplayed = new AtomicInteger(0);
-        Composite startColumn = Composites.EMPTY;
 
         int pageSize = calculatePageSize();
         logger.debug("Using pageSize of {}", pageSize);
@@ -430,26 +431,28 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         RateLimiter rateLimiter = RateLimiter.create(throttleInKB == 0 ? Double.MAX_VALUE : throttleInKB * 1024);
 
         boolean finished = false;
+        PagingState pagingState = null;
         delivery:
         while (true)
         {
-            long now = System.currentTimeMillis();
-            QueryFilter filter = QueryFilter.getSliceFilter(epkey,
-                                                            SystemKeyspace.HINTS_CF,
-                                                            startColumn,
-                                                            Composites.EMPTY,
-                                                            false,
-                                                            pageSize,
-                                                            now);
-
-            ColumnFamily hintsPage = ColumnFamilyStore.removeDeleted(hintStore.getColumnFamily(filter), (int) (now / 1000));
-
-            if (pagingFinished(hintsPage, startColumn))
+            
+            ResultMessage result = QueryProcessor.processPrepared(selectHints, QueryState.forInternalCalls(), 
+                    new QueryOptions(ConsistencyLevel.ONE, Lists.newArrayList(hostIdBytes), false, pageSize, pagingState, null));
+            if (!(result instanceof ResultMessage.Rows))
             {
                 logger.info("Finished hinted handoff of {} rows to endpoint {}", rowsReplayed, endpoint);
                 finished = true;
                 break;
             }
+            
+            UntypedResultSet hintsPage = UntypedResultSet.create(((ResultMessage.Rows)result).result);
+            if (hintsPage.isEmpty())
+            {
+                logger.info("Finished hinted handoff of {} rows to endpoint {}", rowsReplayed, endpoint);
+                finished = true;
+                break;
+            }
+            pagingState = ((ResultMessage.Rows)result).result.metadata.pagingState;
 
             // check if node is still alive and we should continue delivery process
             if (!FailureDetector.instance.isAlive(endpoint))
@@ -459,8 +462,8 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
             }
 
             List<WriteResponseHandler> responseHandlers = Lists.newArrayList();
-            Map<UUID, Long> truncationTimesCache = new HashMap<UUID, Long>();
-            for (final Cell hint : hintsPage)
+            Map<UUID, Long> truncationTimesCache = new HashMap<>();
+            for (final Row hint : hintsPage)
             {
                 // check if hints delivery has been paused during the process
                 if (hintedHandOffPaused)
@@ -469,18 +472,20 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                     break delivery;
                 }
 
+                int version = hint.getInt("message_version");
+                long writetime = hint.getLong("tstamp");
+                Integer ttl = hint.has("ttl") ? hint.getInt("ttl") : null;
+                
                 // Skip tombstones:
                 // if we iterate quickly enough, it's possible that we could request a new page in the same millisecond
                 // in which the local deletion timestamp was generated on the last column in the old page, in which
                 // case the hint will have no columns (since it's deleted) but will still be included in the resultset
                 // since (even with gcgs=0) it's still a "relevant" tombstone.
-                if (!hint.isLive(System.currentTimeMillis()))
+                //FIXME: writetime - nanos, ttl - secs
+                if ((ttl != null) && ((writetime + ttl*10e9)/1000 < System.currentTimeMillis()))
                     continue;
 
-                startColumn = hint.name();
-
-                int version = Int32Type.instance.compose(hint.name().get(1));
-                DataInputStream in = new DataInputStream(ByteBufferUtil.inputStream(hint.value()));
+                DataInputStream in = new DataInputStream(ByteBufferUtil.inputStream(hint.getBytes("mutation")));
                 Mutation mutation;
                 try
                 {
@@ -489,7 +494,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 catch (UnknownColumnFamilyException e)
                 {
                     logger.debug("Skipping delivery of hint for deleted columnfamily", e);
-                    deleteHint(hostIdBytes, hint.name(), hint.timestamp());
+                    deleteHint(hint);
                     continue;
                 }
                 catch (IOException e)
@@ -507,8 +512,8 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                         truncatedAt = cfs.getTruncationTime();
                         truncationTimesCache.put(cfId, truncatedAt);
                     }
-
-                    if (hint.timestamp() < truncatedAt)
+                    //TODO: doublecheck writetime- nanos
+                    if (writetime < truncatedAt)
                     {
                         logger.debug("Skipping delivery of hint for truncated columnfamily {}", cfId);
                         mutation = mutation.without(cfId);
@@ -517,7 +522,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
                 if (mutation.isEmpty())
                 {
-                    deleteHint(hostIdBytes, hint.name(), hint.timestamp());
+                    deleteHint(hint);
                     continue;
                 }
 
@@ -528,7 +533,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                     public void run()
                     {
                         rowsReplayed.incrementAndGet();
-                        deleteHint(hostIdBytes, hint.name(), hint.timestamp());
+                        deleteHint(hint);
                     }
                 };
                 WriteResponseHandler responseHandler = new WriteResponseHandler(endpoint, WriteType.UNLOGGED_BATCH, callback);
@@ -621,6 +626,14 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 try
                 {
                     deliverHintsToEndpoint(to);
+                }
+                catch (RequestValidationException e)
+                {
+                    throw new AssertionError(e); // not supposed to happen
+                }
+                catch (RequestExecutionException e)
+                {
+                    throw new RuntimeException(e);
                 }
                 finally
                 {
