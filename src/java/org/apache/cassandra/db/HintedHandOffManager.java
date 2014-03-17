@@ -23,32 +23,35 @@ import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.RateLimiter;
-import com.google.common.util.concurrent.Uninterruptibles;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.QueryOptions;
 import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.composites.CellName;
 import org.apache.cassandra.db.composites.Composite;
 import org.apache.cassandra.db.composites.Composites;
-import org.apache.cassandra.db.compaction.CompactionManager;
-import org.apache.cassandra.db.filter.*;
+import org.apache.cassandra.db.filter.QueryFilter;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.exceptions.RequestExecutionException;
 import org.apache.cassandra.exceptions.RequestValidationException;
@@ -61,11 +64,20 @@ import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.metrics.HintedHandoffMetrics;
 import org.apache.cassandra.net.MessageOut;
 import org.apache.cassandra.net.MessagingService;
-import org.apache.cassandra.service.*;
+import org.apache.cassandra.service.QueryState;
+import org.apache.cassandra.service.StorageService;
+import org.apache.cassandra.service.WriteResponseHandler;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.UUIDGen;
 import org.cliffc.high_scale_lib.NonBlockingHashSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.RateLimiter;
+import com.google.common.util.concurrent.Uninterruptibles;
 
 /**
  * The hint schema looks like this:
@@ -113,7 +125,37 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                                                                                  "internal");
 
     private final ColumnFamilyStore hintStore = Keyspace.open(Keyspace.SYSTEM_KS).getColumnFamilyStore(SystemKeyspace.HINTS_CF);
-
+    
+    /**
+     * DELETE from hints USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?
+     */
+    private final CQLStatement deleteHint;
+    
+    /**
+     * INSERT INTO hints (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?
+     */
+    private final CQLStatement insertHint;
+    
+    public HintedHandOffManager()
+    {
+        super();
+        try
+        {
+            deleteHint = QueryProcessor.parseStatement(
+                    String.format("DELETE from %s.%s USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?", 
+                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
+                    QueryState.forInternalCalls());
+            
+            insertHint = QueryProcessor.parseStatement(
+                    String.format("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?", 
+                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
+                    QueryState.forInternalCalls());
+        }
+        catch (RequestValidationException e)
+        {
+            throw new AssertionError(e); // not supposed to happen
+        }
+    }
     /**
      * Returns a mutation representing a Hint to be sent to <code>targetId</code>
      * as soon as it becomes available again.
@@ -131,9 +173,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
         try
         {
-            QueryProcessor.process(
-                    String.format("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?",
-                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
+            QueryProcessor.processPrepared(insertHint,
                     QueryState.forInternalCalls(),
                     new QueryOptions(ConsistencyLevel.ONE,
                         Lists.newArrayList(
@@ -193,11 +233,30 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         StorageService.optionalTasks.scheduleWithFixedDelay(runnable, 10, 10, TimeUnit.MINUTES);
     }
 
-    private static void deleteHint(ByteBuffer tokenBytes, CellName columnName, long timestamp)
+    private void deleteHint(ByteBuffer tokenBytes, CellName columnName, long timestamp)
     {
-        Mutation mutation = new Mutation(Keyspace.SYSTEM_KS, tokenBytes);
-        mutation.delete(SystemKeyspace.HINTS_CF, columnName, timestamp);
-        mutation.applyUnsafe(); // don't bother with commitlog since we're going to flush as soon as we're done with delivery
+        try
+        {
+            QueryProcessor.processPrepared(deleteHint,
+                    QueryState.forInternalCalls(),
+                    new QueryOptions(ConsistencyLevel.ONE,
+                            Lists.newArrayList(
+                                    ByteBufferUtil.bytes(timestamp),
+                                    tokenBytes,
+                                    columnName.get(0),
+                                    columnName.get(1)
+                                    )
+                    )
+            );
+        }
+        catch (RequestValidationException e)
+        {
+            throw new AssertionError(e); // not supposed to happen
+        }
+        catch (RequestExecutionException e)
+        {
+            throw new RuntimeException(e);
+        }
     }
 
     public void deleteHintsForEndpoint(final String ipOrHostname)
