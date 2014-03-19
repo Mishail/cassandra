@@ -67,6 +67,7 @@ import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.service.WriteResponseHandler;
 import org.apache.cassandra.service.pager.PagingState;
 import org.apache.cassandra.transport.messages.ResultMessage;
+import org.apache.cassandra.transport.messages.ResultMessage.Rows;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.cliffc.high_scale_lib.NonBlockingHashSet;
@@ -129,43 +130,18 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
     /**
      * DELETE from hints USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?
      */
-    private final DeleteStatement deleteHint;
+    private static final DeleteStatement deleteHint = (DeleteStatement) parseStatement("DELETE from %s.%s USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?");
     
     /**
      * INSERT INTO hints (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?
      */
-    private final CQLStatement insertHint;
+    private static final CQLStatement insertHint = parseStatement("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?");
     
     /**
      * "SELECT target_id, hint_id, message_version, mutation, WRITETIME(mutation), TTL(mutation) FROM hints WHERE target_id = ?"
      */
-    private final SelectStatement selectHints;
+    private static final SelectStatement selectHints = (SelectStatement) parseStatement("SELECT target_id, hint_id, message_version, mutation, WRITETIME(mutation) as tstamp, TTL(mutation) as ttl FROM %s.%s WHERE target_id = ?");
     
-    public HintedHandOffManager()
-    {
-        super();
-        try
-        {
-            deleteHint = (DeleteStatement) QueryProcessor.parseStatement(
-                    String.format("DELETE from %s.%s USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?", 
-                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
-                    QueryState.forInternalCalls());
-            
-            insertHint = QueryProcessor.parseStatement(
-                    String.format("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?", 
-                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
-                    QueryState.forInternalCalls());
-            
-            selectHints = (SelectStatement) QueryProcessor.parseStatement(
-                    String.format("SELECT target_id, hint_id, message_version, mutation, WRITETIME(mutation) as tstamp, TTL(mutation) as ttl FROM %s.%s WHERE target_id = ?", 
-                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
-                    QueryState.forInternalCalls());
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
-    }
     /**
      * Returns a mutation representing a Hint to be sent to <code>targetId</code>
      * as soon as it becomes available again.
@@ -181,10 +157,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         else
             logger.warn("Unable to find matching endpoint for target {} when storing a hint", targetId);
 
-        try
-        {
-            QueryProcessor.processPrepared(insertHint,
-                    QueryState.forInternalCalls(),
+        processPrepared(insertHint,
                     new QueryOptions(ConsistencyLevel.ONE,
                         Lists.newArrayList(
                                 ByteBufferUtil.bytes(targetId),
@@ -194,15 +167,6 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                         )
                    )
            );
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
-        catch (RequestExecutionException e)
-        {
-            throw new RuntimeException(e);
-        }
     }
 
     /*
@@ -245,10 +209,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
     private void deleteHint(Row hint)
     {
-        try
-        {
-            QueryProcessor.processPrepared(deleteHint,
-                    QueryState.forInternalCalls(),
+        processPrepared(deleteHint,
                     new QueryOptions(ConsistencyLevel.ONE,
                             Lists.newArrayList(
                                     hint.getBytes("tstamp"),
@@ -258,15 +219,6 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                                     )
                     )
             );
-        }
-        catch (RequestValidationException e)
-        {
-            throw new AssertionError(e); // not supposed to happen
-        }
-        catch (RequestExecutionException e)
-        {
-            throw new RuntimeException(e);
-        }
     }
 
     public void deleteHintsForEndpoint(final String ipOrHostname)
@@ -374,7 +326,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         return waited;
     }
 
-    private void deliverHintsToEndpoint(InetAddress endpoint) throws RequestExecutionException, RequestValidationException
+    private void deliverHintsToEndpoint(InetAddress endpoint)
     {
         if (hintStore.isEmpty())
             return; // nothing to do, don't confuse users by logging a no-op handoff
@@ -412,12 +364,11 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
      * 4. Force a flush
      * 5. Do major compaction to clean up all deletes etc.
      */
-    private void doDeliverHintsToEndpoint(InetAddress endpoint) throws RequestExecutionException, RequestValidationException
+    private void doDeliverHintsToEndpoint(InetAddress endpoint)
     {
         // find the hints for the node using its token.
         final UUID hostId = Gossiper.instance.getHostId(endpoint);
         logger.info("Started hinted handoff for host: {} with IP: {}", hostId, endpoint);
-        final ByteBuffer hostIdBytes = ByteBufferUtil.bytes(hostId);
 
         final AtomicInteger rowsReplayed = new AtomicInteger(0);
 
@@ -435,24 +386,20 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         delivery:
         while (true)
         {
-            
-            ResultMessage result = QueryProcessor.processPrepared(selectHints, QueryState.forInternalCalls(), 
-                    new QueryOptions(ConsistencyLevel.ONE, Lists.newArrayList(hostIdBytes), false, pageSize, pagingState, null));
-            if (!(result instanceof ResultMessage.Rows))
-            {
-                logger.info("Finished hinted handoff of {} rows to endpoint {}", rowsReplayed, endpoint);
-                finished = true;
-                break;
-            }
-            
-            UntypedResultSet hintsPage = UntypedResultSet.create(((ResultMessage.Rows)result).result);
+            ResultMessage.Rows result = (Rows) processPrepared(selectHints, 
+                    new QueryOptions(
+                            ConsistencyLevel.ONE, 
+                            Lists.newArrayList(ByteBufferUtil.bytes(hostId)), 
+                            false, pageSize, pagingState, null));
+
+            UntypedResultSet hintsPage = UntypedResultSet.create(result.result);
             if (hintsPage.isEmpty())
             {
                 logger.info("Finished hinted handoff of {} rows to endpoint {}", rowsReplayed, endpoint);
                 finished = true;
                 break;
             }
-            pagingState = ((ResultMessage.Rows)result).result.metadata.pagingState;
+            pagingState = result.result.metadata.pagingState;
 
             // check if node is still alive and we should continue delivery process
             if (!FailureDetector.instance.isAlive(endpoint))
@@ -627,14 +574,6 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 {
                     deliverHintsToEndpoint(to);
                 }
-                catch (RequestValidationException e)
-                {
-                    throw new AssertionError(e); // not supposed to happen
-                }
-                catch (RequestExecutionException e)
-                {
-                    throw new RuntimeException(e);
-                }
                 finally
                 {
                     queuedDeliveries.remove(to);
@@ -663,5 +602,35 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
             result.addFirst(row.getString("ttoken"));
         }
         return result;
+    }
+    
+    private static ResultMessage processPrepared(CQLStatement stmt, QueryOptions options)
+    {
+        try
+        {
+            return QueryProcessor.processPrepared(stmt, QueryState.forInternalCalls(), options);
+        }
+        catch (RequestValidationException e)
+        {
+            throw new AssertionError(e); // not supposed to happen
+        }
+        catch (RequestExecutionException e)
+        {
+            throw new RuntimeException(e);
+        }
+    }
+    
+    private static CQLStatement parseStatement(String input)
+    {
+        try
+        {
+            return QueryProcessor.parseStatement(
+                    String.format(input,Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF),
+                    QueryState.forInternalCalls());
+        }
+        catch (RequestValidationException e)
+        {
+            throw new AssertionError(e); // not supposed to happen
+        }
     }
 }
