@@ -133,9 +133,9 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
     private static final DeleteStatement deleteHint = (DeleteStatement) parseStatement("DELETE from %s.%s USING TIMESTAMP ? WHERE target_id = ? AND hint_id = ? AND message_version = ?");
     
     /**
-     * INSERT INTO hints (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?
+     * INSERT INTO hints (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TIMESTAMP ? AND TTL ?
      */
-    private static final CQLStatement insertHint = parseStatement("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TTL ?");
+    private static final CQLStatement insertHint = parseStatement("INSERT INTO %s.%s (target_id, hint_id, message_version, mutation) VALUES (?, now(), ?, ?) USING TIMESTAMP ? AND TTL ?");
     
     /**
      * "SELECT target_id, hint_id, message_version, mutation, WRITETIME(mutation), TTL(mutation) FROM hints WHERE target_id = ?"
@@ -163,6 +163,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                                 ByteBufferUtil.bytes(targetId),
                                 ByteBufferUtil.bytes(MessagingService.current_version),
                                 ByteBuffer.wrap(FBUtilities.serialize(mutation, Mutation.serializer, MessagingService.current_version)),
+                                ByteBufferUtil.bytes(System.currentTimeMillis()),
                                 ByteBufferUtil.bytes(ttl)
                         )
                    )
@@ -427,7 +428,6 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 // in which the local deletion timestamp was generated on the last column in the old page, in which
                 // case the hint will have no columns (since it's deleted) but will still be included in the resultset
                 // since (even with gcgs=0) it's still a "relevant" tombstone.
-                //FIXME: writetime - nanos, ttl - secs
                 if (hintIsDead(hint))
                     continue;
 
@@ -458,7 +458,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                         truncatedAt = cfs.getTruncationTime();
                         truncationTimesCache.put(cfId, truncatedAt);
                     }
-                    //TODO: doublecheck writetime- nanos
+
                     if (writetime < truncatedAt)
                     {
                         logger.debug("Skipping delivery of hint for truncated columnfamily {}", cfId);
@@ -520,8 +520,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
             return false;
         int ttl = input.getInt("ttl");
         long writetime = input.getLong("tstamp");
-        //FIXME: micros?
-        return TimeUnit.NANOSECONDS.toMillis(writetime + TimeUnit.SECONDS.toNanos(ttl)) < System.currentTimeMillis();
+        return (writetime + TimeUnit.SECONDS.toMillis(ttl)) < System.currentTimeMillis();
     }
 
     private int calculatePageSize()
