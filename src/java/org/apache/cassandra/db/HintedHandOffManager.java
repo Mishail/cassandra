@@ -421,15 +421,14 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
                 int version = hint.getInt("message_version");
                 long writetime = hint.getLong("tstamp");
-                Integer ttl = hint.has("ttl") ? hint.getInt("ttl") : null;
-                
+
                 // Skip tombstones:
                 // if we iterate quickly enough, it's possible that we could request a new page in the same millisecond
                 // in which the local deletion timestamp was generated on the last column in the old page, in which
                 // case the hint will have no columns (since it's deleted) but will still be included in the resultset
                 // since (even with gcgs=0) it's still a "relevant" tombstone.
                 //FIXME: writetime - nanos, ttl - secs
-                if ((ttl != null) && ((writetime + ttl*10e9)/1000 < System.currentTimeMillis()))
+                if (hintIsDead(hint))
                     continue;
 
                 DataInputStream in = new DataInputStream(ByteBufferUtil.inputStream(hint.getBytes("mutation")));
@@ -513,6 +512,16 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 throw new RuntimeException(e);
             }
         }
+    }
+
+    private boolean hintIsDead(Row input)
+    {
+        if (!input.has("ttl"))
+            return false;
+        int ttl = input.getInt("ttl");
+        long writetime = input.getLong("tstamp");
+        //FIXME: micros?
+        return TimeUnit.NANOSECONDS.toMillis(writetime + TimeUnit.SECONDS.toNanos(ttl)) < System.currentTimeMillis();
     }
 
     private int calculatePageSize()
