@@ -40,6 +40,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.RateLimiter;
+import com.google.common.util.concurrent.Uninterruptibles;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.cassandra.concurrent.JMXEnabledThreadPoolExecutor;
 import org.apache.cassandra.concurrent.NamedThreadFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
@@ -71,14 +79,6 @@ import org.apache.cassandra.transport.messages.ResultMessage.Rows;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.cliffc.high_scale_lib.NonBlockingHashSet;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.RateLimiter;
-import com.google.common.util.concurrent.Uninterruptibles;
 
 /**
  * The hint schema looks like this:
@@ -157,17 +157,13 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         else
             logger.warn("Unable to find matching endpoint for target {} when storing a hint", targetId);
 
-        processPrepared(insertHint,
-                    new QueryOptions(ConsistencyLevel.ONE,
-                        Lists.newArrayList(
-                                ByteBufferUtil.bytes(targetId),
-                                ByteBufferUtil.bytes(MessagingService.current_version),
-                                ByteBuffer.wrap(FBUtilities.serialize(mutation, Mutation.serializer, MessagingService.current_version)),
-                                ByteBufferUtil.bytes(System.currentTimeMillis()),
-                                ByteBufferUtil.bytes(ttl)
-                        )
-                   )
-           );
+        processPrepared(insertHint, new QueryOptions(ConsistencyLevel.ONE,
+                                    Lists.newArrayList(
+                                            ByteBufferUtil.bytes(targetId),
+                                            ByteBufferUtil.bytes(MessagingService.current_version),
+                                            ByteBuffer.wrap(FBUtilities.serialize(mutation, Mutation.serializer, MessagingService.current_version)),
+                                            ByteBufferUtil.bytes(System.currentTimeMillis()),
+                                            ByteBufferUtil.bytes(ttl))));
     }
 
     /*
@@ -210,16 +206,13 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
 
     private void deleteHint(Row hint)
     {
-        processPrepared(deleteHint,
-                    new QueryOptions(ConsistencyLevel.ONE,
-                            Lists.newArrayList(
-                                    hint.getBytes("tstamp"),
-                                    hint.getBytes("target_id"),
-                                    hint.getBytes("hint_id"),
-                                    hint.getBytes("message_version")
-                                    )
-                    )
-            );
+        processPrepared(deleteHint, new QueryOptions(ConsistencyLevel.ONE,
+                                        Lists.newArrayList(
+                                                hint.getBytes("tstamp"),
+                                                hint.getBytes("target_id"),
+                                                hint.getBytes("hint_id"),
+                                                hint.getBytes("message_version")
+                                                )));
     }
 
     public void deleteHintsForEndpoint(final String ipOrHostname)
@@ -387,10 +380,10 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         delivery:
         while (true)
         {
-            ResultMessage.Rows result = (Rows) processPrepared(selectHints, 
+            ResultMessage.Rows result = (Rows) processPrepared(selectHints,
                     new QueryOptions(
-                            ConsistencyLevel.ONE, 
-                            Lists.newArrayList(ByteBufferUtil.bytes(hostId)), 
+                            ConsistencyLevel.ONE,
+                            Lists.newArrayList(ByteBufferUtil.bytes(hostId)),
                             false, pageSize, pagingState, null));
 
             UntypedResultSet hintsPage = UntypedResultSet.create(result.result);
