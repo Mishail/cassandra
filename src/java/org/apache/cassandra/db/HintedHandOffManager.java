@@ -243,8 +243,11 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
                 try
                 {
                     logger.info("Deleting any stored hints for {}", endpoint);
-                    QueryProcessor.processInternal(String.format("DELETE FROM %s.%s WHERE target_id = %s", 
-                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF, hostId));
+                    QueryProcessor.processInternal(
+                            String.format("DELETE FROM %s.%s USING TIMESTAMP %d WHERE target_id = %s",
+                            Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF,
+                            System.currentTimeMillis(),
+                            hostId));
                     compact();
                 }
                 catch (Exception e)
@@ -600,7 +603,7 @@ public class HintedHandOffManager implements HintedHandOffManagerMBean
         for (UntypedResultSet.Row row : QueryProcessor.processInternal(
                 String.format("SELECT DISTINCT TOKEN(target_id) AS ttoken from %s.%s", Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF)))
         {
-            result.addFirst(row.getString("ttoken"));
+            result.addFirst(row.getUUID("ttoken").toString());
         }
         return result;
     }

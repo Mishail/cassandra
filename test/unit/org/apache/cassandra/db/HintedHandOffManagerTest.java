@@ -21,12 +21,19 @@ package org.apache.cassandra.db;
  */
 
 
+import static org.apache.cassandra.cql3.QueryProcessor.processInternal;
+import static org.hamcrest.CoreMatchers.is;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
+import static org.junit.matchers.JUnitMatchers.hasItem;
+
 import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-import org.junit.Test;
 import org.apache.cassandra.SchemaLoader;
 import org.apache.cassandra.Util;
 import org.apache.cassandra.cql3.UntypedResultSet;
@@ -34,15 +41,18 @@ import org.apache.cassandra.db.compaction.CompactionManager;
 import org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy;
 import org.apache.cassandra.db.marshal.Int32Type;
 import org.apache.cassandra.db.marshal.UUIDType;
+import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.locator.TokenMetadata;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
+import org.junit.Before;
+import org.junit.Test;
 
+import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Iterators;
-
-import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
-import static org.apache.cassandra.cql3.QueryProcessor.processInternal;
+import com.google.common.collect.Multimap;
+import com.google.common.util.concurrent.Uninterruptibles;
 
 public class HintedHandOffManagerTest extends SchemaLoader
 {
@@ -50,24 +60,24 @@ public class HintedHandOffManagerTest extends SchemaLoader
     public static final String KEYSPACE4 = "Keyspace4";
     public static final String STANDARD1_CF = "Standard1";
     public static final String COLUMN1 = "column1";
+    private final ColumnFamilyStore hintStore = Keyspace.open(Keyspace.SYSTEM_KS).getColumnFamilyStore(SystemKeyspace.HINTS_CF);
 
+    @Before
+    public void cleanUp()
+    {
+        hintStore.clearUnsafe();
+    }
     // Test compaction of hints column family. It shouldn't remove all columns on compaction.
     @Test
     public void testCompactionOfHintsCF() throws Exception
     {
         // prepare hints column family
-        Keyspace systemKeyspace = Keyspace.open("system");
-        ColumnFamilyStore hintStore = systemKeyspace.getColumnFamilyStore(SystemKeyspace.HINTS_CF);
-        hintStore.clearUnsafe();
         hintStore.metadata.gcGraceSeconds(36000); // 10 hours
         hintStore.setCompactionStrategyClass(SizeTieredCompactionStrategy.class.getCanonicalName());
         hintStore.disableAutoCompaction();
 
-        // insert 1 hint
-        Mutation rm = new Mutation(KEYSPACE4, ByteBufferUtil.bytes(1));
-        rm.add(STANDARD1_CF, Util.cellname(COLUMN1), ByteBufferUtil.EMPTY_BYTE_BUFFER, System.currentTimeMillis());
-
-        HintedHandOffManager.instance.insertHintFor(rm, HintedHandOffManager.calculateHintTTL(rm), UUID.randomUUID());
+        Mutation rm = createMutation();
+        insertHintFor(rm, UUID.randomUUID());
 
         // flush data to disk
         hintStore.forceBlockingFlush();
@@ -98,29 +108,78 @@ public class HintedHandOffManagerTest extends SchemaLoader
     @Test(timeout = 5000)
     public void testTruncateHints() throws Exception
     {
-        Keyspace systemKeyspace = Keyspace.open("system");
-        ColumnFamilyStore hintStore = systemKeyspace.getColumnFamilyStore(SystemKeyspace.HINTS_CF);
-        hintStore.clearUnsafe();
-
         // insert 1 hint
-        Mutation rm = new Mutation(KEYSPACE4, ByteBufferUtil.bytes(1));
-        rm.add(STANDARD1_CF, Util.cellname(COLUMN1), ByteBufferUtil.EMPTY_BYTE_BUFFER, System.currentTimeMillis());
-
-        HintedHandOffManager.instance.insertHintFor(rm, HintedHandOffManager.calculateHintTTL(rm), UUID.randomUUID());
+        Mutation rm = createMutation();
+        insertHintFor(rm, UUID.randomUUID());
 
         assertThat(getNoOfHints(), is(1));
 
         HintedHandOffManager.instance.truncateAllHints();
-
-        while(getNoOfHints() > 0)
-        {
-            Thread.sleep(100);
-        }
-
         assertThat(getNoOfHints(), is(0));
     }
 
-    private int getNoOfHints()
+    @Test
+    public void shouldReturnThreeEndpoints()
+    {
+        Mutation rm = createMutation();
+        UUID uuid1 = UUID.randomUUID();
+        UUID uuid2 = UUID.randomUUID();
+        UUID uuid3 = UUID.randomUUID();
+        insertHintFor(rm, uuid1);
+        insertHintFor(rm, uuid2);
+        insertHintFor(rm, uuid2);
+        insertHintFor(rm, uuid3);
+        insertHintFor(rm, uuid3);
+        insertHintFor(rm, uuid3);
+        
+        List<String> result = HintedHandOffManager.instance.listEndpointsPendingHints();
+        assertThat(result.size(), is(3));
+        assertThat(result, hasItem(uuid1.toString()));
+        assertThat(result, hasItem(uuid2.toString()));
+        assertThat(result, hasItem(uuid3.toString()));
+    }
+    
+    @Test
+    public void shouldDeleteAllHintsForEndpoint() throws UnknownHostException
+    {
+        InetAddress ep = InetAddress.getByName("127.0.0.1");
+        UUID uuid = UUID.randomUUID();
+        TokenMetadata metadata = StorageService.instance.getTokenMetadata();
+        metadata.clearUnsafe();
+        @SuppressWarnings("rawtypes")
+        Multimap<InetAddress, Token> dc1 = HashMultimap.create();
+        dc1.put(ep, Util.token("A"));
+        metadata.updateNormalTokens(dc1);
+        metadata.updateHostId(uuid, ep);
+        
+        insertHintFor(createMutation(), uuid);
+        insertHintFor(createMutation(), uuid);
+        insertHintFor(createMutation(), uuid);
+        insertHintFor(createMutation(), UUID.randomUUID());
+        insertHintFor(createMutation(), UUID.randomUUID());
+        insertHintFor(createMutation(), UUID.randomUUID());
+        
+        assertThat(getNoOfHints(), is(6));
+        
+        HintedHandOffManager.instance.deleteHintsForEndpoint(ep);
+        Uninterruptibles.sleepUninterruptibly(1, TimeUnit.SECONDS);
+        
+        assertThat(getNoOfHints(), is(3));
+    }
+    
+    private static Mutation createMutation()
+    {
+        Mutation rm = new Mutation(KEYSPACE4, ByteBufferUtil.bytes(1));
+        rm.add(STANDARD1_CF, Util.cellname(COLUMN1), ByteBufferUtil.EMPTY_BYTE_BUFFER, System.currentTimeMillis());
+        return rm;
+    }
+    
+    private static void insertHintFor(Mutation rm, UUID uuid)
+    {
+        HintedHandOffManager.instance.insertHintFor(rm, HintedHandOffManager.calculateHintTTL(rm), uuid);
+    }
+    
+    private static int getNoOfHints()
     {
         String req = "SELECT * FROM system.%s";
         UntypedResultSet resultSet = processInternal(String.format(req, SystemKeyspace.HINTS_CF));
