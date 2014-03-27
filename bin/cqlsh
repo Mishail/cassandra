@@ -33,7 +33,7 @@ from __future__ import with_statement
 from uuid import UUID
 
 description = "CQL Shell for Apache Cassandra"
-version = "5.0.0"
+version = "5.0.1"
 
 from StringIO import StringIO
 from contextlib import contextmanager, closing
@@ -51,6 +51,9 @@ import platform
 import warnings
 import csv
 import getpass
+from urllib2 import urlopen, URLError
+from urllib import pathname2url
+from urlparse import urlparse, urljoin
 
 
 readline = None
@@ -1431,10 +1434,10 @@ class Shell(cmd.Cmd):
         See also the --file option to cqlsh.
         """
         fname = parsed.get_binding('fname')
-        fname = os.path.expanduser(self.cql_unprotect_value(fname))
+        fname = self.cql_unprotect_value(fname)
         try:
-            f = open(fname, 'r')
-        except IOError, e:
+            f = open_url_or_file(fname)
+        except URLError, e:
             self.printerr('Could not open %r: %s' % (fname, e))
             return
         subshell = Shell(self.hostname, self.port,
@@ -1683,7 +1686,7 @@ class Shell(cmd.Cmd):
         if shownum is None:
             shownum = self.show_line_nums
         if shownum:
-            text = '%s:%d:%s' % (self.stdin.name, self.lineno, text)
+            text = '%s:%d:%s' % (self.stdin.geturl(), self.lineno, text)
         self.writeresult(text, color, newline=newline, out=sys.stderr)
 
 
@@ -1809,6 +1812,14 @@ def save_history():
         except IOError:
             pass
 
+def open_url_or_file(source):
+    result = urlparse(source)
+    if not result.scheme.lower() in ("http", "https", "ftp"):
+        #local file
+        source = urljoin("file:", pathname2url(os.path.abspath(os.path.expanduser(source))))
+    return urlopen(source)
+
+
 def main(options, hostname, port):
     setup_cqlruleset(options.cqlmodule)
     setup_cqldocs(options.cqlmodule)
@@ -1818,7 +1829,7 @@ def main(options, hostname, port):
         stdin = None
     else:
         try:
-            stdin = open(options.file, 'r')
+            stdin = open_url_or_file(options.file)
         except IOError, e:
             sys.exit("Can't open %r: %s" % (options.file, e))
 
