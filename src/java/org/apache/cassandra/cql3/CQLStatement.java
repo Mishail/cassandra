@@ -56,6 +56,7 @@ public interface CQLStatement
      * Variante of execute used for internal query against the system tables, and thus only query the local node.
      *
      * @param state the current query state
+     * @param options options options for this query (consistency, variables, pageSize, ...)
      */
-    public ResultMessage executeInternal(QueryState state) throws RequestValidationException, RequestExecutionException;
+    public ResultMessage executeInternal(QueryState state, QueryOptions options) throws RequestValidationException, RequestExecutionException;
 }

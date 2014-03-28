@@ -283,9 +283,9 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         return rows;
     }
 
-    public ResultMessage.Rows executeInternal(QueryState state) throws RequestExecutionException, RequestValidationException
+    public ResultMessage.Rows executeInternal(QueryState state, QueryOptions options) throws RequestExecutionException, RequestValidationException
     {
-        List<ByteBuffer> variables = Collections.emptyList();
+        List<ByteBuffer> variables = options.getValues();
         int limit = getLimit(variables);
         long now = System.currentTimeMillis();
         List<Row> rows;
