@@ -182,115 +182,15 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         // Nothing to do, all validation has been done by RawStatement.prepare()
     }
     
-    private abstract static class AbstractExecutionContext
+
+    private ResultMessage.Rows executeWithContext(AbstractExecutionContext context) throws RequestExecutionException, RequestValidationException
     {
-        protected final ConsistencyLevel cl;
-        protected final List<ByteBuffer> variables;
-        protected final long now;
-        protected int limit;
-        protected final PagingState pagingState;
-
-        AbstractExecutionContext(QueryState state, QueryOptions options)
-        {
-            this.cl = options.getConsistency();
-            this.variables = options.getValues();
-            this.now = System.currentTimeMillis();
-            this.pagingState = options.getPagingState();
-        }
-
-        public abstract void validate() throws InvalidRequestException;
-        public abstract Rows executeWithoutPager(Pageable command) throws RequestValidationException, ReadTimeoutException, UnavailableException, IsBootstrappingException;
-        public abstract QueryPager getPager(Pageable command);
-    }
-    
-    private class LocalExecutionContext extends AbstractExecutionContext
-    {
-        LocalExecutionContext(QueryState state, QueryOptions options)
-        {
-            super(state, options);
-        }
-
-        @Override
-        public void validate() {}
-
-        @Override
-        public Rows executeWithoutPager(Pageable command) throws RequestValidationException
-        {
-            
-            List<Row> rows;
-            if (command == null)
-            {
-                rows = Collections.<Row>emptyList();
-            }
-            else
-            {
-                rows = command instanceof Pageable.ReadCommands
-                     ? readLocally(keyspace(), ((Pageable.ReadCommands) command).commands)
-                     : ((RangeSliceCommand) command).executeLocally();
-            }
-            
-            return processResults(rows, variables, limit, now);
-        }
-
-        @Override
-        public QueryPager getPager(Pageable command)
-        {
-            return QueryPagers.localPager(command, pagingState);
-        }
-        
-    }
-    
-    private class GlobalExecutionContext extends AbstractExecutionContext
-    {
-
-        GlobalExecutionContext(QueryState state, QueryOptions options)
-        {
-            super(state, options);
-        }
-
-        @Override
-        public void validate() throws InvalidRequestException
-        {
-            if (cl == null)
-                throw new InvalidRequestException("Invalid empty consistency level");
-
-            cl.validateForRead(keyspace());
-        }
-
-        @Override
-        public Rows executeWithoutPager(Pageable command) throws RequestValidationException, ReadTimeoutException, UnavailableException, IsBootstrappingException
-        {
-            List<Row> rows;
-            if (command == null)
-            {
-                rows = Collections.<Row>emptyList();
-            }
-            else
-            {
-                rows = command instanceof Pageable.ReadCommands
-                     ? StorageProxy.read(((Pageable.ReadCommands)command).commands, cl)
-                     : StorageProxy.getRangeSlice((RangeSliceCommand)command, cl);
-            }
-
-            return processResults(rows, variables, limit, now);
-        }
-
-        @Override
-        public QueryPager getPager(Pageable command)
-        {
-            return QueryPagers.pager(command, cl, pagingState);
-        }
-        
-    }
-    
-    private ResultMessage.Rows executeWithContext(QueryState state, QueryOptions options, AbstractExecutionContext context) throws RequestExecutionException, RequestValidationException
-    {
-        List<ByteBuffer> variables = options.getValues();
+        List<ByteBuffer> variables = context.getValues();
 
         context.validate();
 
-        int limit = getLimit(variables);
-        long now = System.currentTimeMillis();
+        int limit = context.getLimit();
+        long now = context.getNow();
         Pageable command;
         if (isKeyRange || usesSecondaryIndexing)
         {
@@ -302,7 +202,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
             command = commands == null ? null : new Pageable.ReadCommands(commands);
         }
 
-        int pageSize = options.getPageSize();
+        int pageSize = context.getPageSize();
         // A count query will never be paged for the user, but we always page it internally to avoid OOM.
         // If we user provided a pageSize we'll use that to page internally (because why not), otherwise we use our default
         // Note that if there are some nodes in the cluster with a version less than 2.0, we can't use paging (CASSANDRA-6707).
@@ -334,7 +234,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
     public ResultMessage.Rows execute(QueryState state, QueryOptions options) throws RequestExecutionException, RequestValidationException
     {
-       return executeWithContext(state, options, new GlobalExecutionContext(state, options));
+       return executeWithContext(new GlobalExecutionContext(state, options));
     }
 
     private ResultMessage.Rows pageCountQuery(QueryPager pager, List<ByteBuffer> variables, int pageSize, long now) throws RequestValidationException, RequestExecutionException
@@ -371,7 +271,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
     public ResultMessage.Rows executeInternal(QueryState state, QueryOptions options) throws RequestExecutionException, RequestValidationException
     {
-        return executeWithContext(state, options, new LocalExecutionContext(state, options));
+        return executeWithContext(new LocalExecutionContext(state, options));
     }
 
     public ResultSet process(List<Row> rows) throws InvalidRequestException
@@ -1841,5 +1741,127 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
             return 0;
         }
+    }
+    
+    private abstract class AbstractExecutionContext
+    {
+        protected final ConsistencyLevel cl;
+        protected final List<ByteBuffer> variables;
+        protected final long now;
+        protected final int limit;
+        protected final PagingState pagingState;
+        private final int pageSize;
+
+        AbstractExecutionContext(QueryState state, QueryOptions options) throws InvalidRequestException
+        {
+            this.cl = options.getConsistency();
+            this.variables = options.getValues();
+            this.now = System.currentTimeMillis();
+            this.pagingState = options.getPagingState();
+            this.pageSize = options.getPageSize();
+            this.limit = SelectStatement.this.getLimit(variables);
+        }
+
+        public abstract Rows executeWithoutPager(Pageable command) throws RequestValidationException, ReadTimeoutException, UnavailableException, IsBootstrappingException;
+        public abstract QueryPager getPager(Pageable command);
+        public abstract void validate() throws InvalidRequestException;
+        
+        public long getNow()
+        {
+            return now;
+        }
+
+        public List<ByteBuffer> getValues()
+        {
+            return variables;
+        }
+
+        public int getPageSize()
+        {
+            return pageSize;
+        }
+
+        public int getLimit()
+        {
+            return limit;
+        }
+    }
+    
+    private class LocalExecutionContext extends AbstractExecutionContext
+    {
+        LocalExecutionContext(QueryState state, QueryOptions options) throws InvalidRequestException
+        {
+            super(state, options);
+        }
+
+        @Override
+        public Rows executeWithoutPager(Pageable command) throws RequestValidationException
+        {
+            
+            List<Row> rows;
+            if (command == null)
+            {
+                rows = Collections.<Row>emptyList();
+            }
+            else
+            {
+                rows = command instanceof Pageable.ReadCommands
+                     ? readLocally(keyspace(), ((Pageable.ReadCommands) command).commands)
+                     : ((RangeSliceCommand) command).executeLocally();
+            }
+            
+            return processResults(rows, variables, limit, now);
+        }
+
+        @Override
+        public QueryPager getPager(Pageable command)
+        {
+            return QueryPagers.localPager(command, pagingState);
+        }
+
+        @Override
+        public void validate() {}
+    }
+    
+    private class GlobalExecutionContext extends AbstractExecutionContext
+    {
+        GlobalExecutionContext(QueryState state, QueryOptions options) throws InvalidRequestException
+        {
+            super(state, options);
+        }
+
+        @Override
+        public void validate() throws InvalidRequestException
+        {
+            if (cl == null)
+                throw new InvalidRequestException("Invalid empty consistency level");
+
+            cl.validateForRead(keyspace());
+        }
+
+        @Override
+        public Rows executeWithoutPager(Pageable command) throws RequestValidationException, ReadTimeoutException, UnavailableException, IsBootstrappingException
+        {
+            List<Row> rows;
+            if (command == null)
+            {
+                rows = Collections.<Row>emptyList();
+            }
+            else
+            {
+                rows = command instanceof Pageable.ReadCommands
+                     ? StorageProxy.read(((Pageable.ReadCommands)command).commands, cl)
+                     : StorageProxy.getRangeSlice((RangeSliceCommand)command, cl);
+            }
+
+            return processResults(rows, variables, limit, now);
+        }
+
+        @Override
+        public QueryPager getPager(Pageable command)
+        {
+            return QueryPagers.pager(command, cl, pagingState);
+        }
+        
     }
 }
