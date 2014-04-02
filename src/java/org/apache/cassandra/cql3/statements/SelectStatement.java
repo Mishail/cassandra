@@ -27,11 +27,11 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 
 import org.github.jamm.MemoryMeter;
-
 import org.apache.cassandra.auth.Permission;
 import org.apache.cassandra.cql3.*;
 import org.apache.cassandra.db.composites.*;
 import org.apache.cassandra.transport.messages.ResultMessage;
+import org.apache.cassandra.transport.messages.ResultMessage.Rows;
 import org.apache.cassandra.config.CFMetaData;
 import org.apache.cassandra.config.ColumnDefinition;
 import org.apache.cassandra.db.*;
@@ -181,15 +181,113 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
     {
         // Nothing to do, all validation has been done by RawStatement.prepare()
     }
-
-    public ResultMessage.Rows execute(QueryState state, QueryOptions options) throws RequestExecutionException, RequestValidationException
+    
+    private abstract static class AbstractExecutionContext
     {
-        ConsistencyLevel cl = options.getConsistency();
-        List<ByteBuffer> variables = options.getValues();
-        if (cl == null)
-            throw new InvalidRequestException("Invalid empty consistency level");
+        protected final ConsistencyLevel cl;
+        protected final List<ByteBuffer> variables;
+        protected final long now;
+        protected int limit;
+        protected final PagingState pagingState;
 
-        cl.validateForRead(keyspace());
+        AbstractExecutionContext(QueryState state, QueryOptions options)
+        {
+            this.cl = options.getConsistency();
+            this.variables = options.getValues();
+            this.now = System.currentTimeMillis();
+            this.pagingState = options.getPagingState();
+        }
+
+        public abstract void validate() throws InvalidRequestException;
+        public abstract Rows executeWithoutPager(Pageable command) throws RequestValidationException, ReadTimeoutException, UnavailableException, IsBootstrappingException;
+        public abstract QueryPager getPager(Pageable command);
+    }
+    
+    private class LocalExecutionContext extends AbstractExecutionContext
+    {
+        LocalExecutionContext(QueryState state, QueryOptions options)
+        {
+            super(state, options);
+        }
+
+        @Override
+        public void validate() {}
+
+        @Override
+        public Rows executeWithoutPager(Pageable command) throws RequestValidationException
+        {
+            
+            List<Row> rows;
+            if (command == null)
+            {
+                rows = Collections.<Row>emptyList();
+            }
+            else
+            {
+                rows = command instanceof Pageable.ReadCommands
+                     ? readLocally(keyspace(), ((Pageable.ReadCommands) command).commands)
+                     : ((RangeSliceCommand) command).executeLocally();
+            }
+            
+            return processResults(rows, variables, limit, now);
+        }
+
+        @Override
+        public QueryPager getPager(Pageable command)
+        {
+            return QueryPagers.localPager(command, pagingState);
+        }
+        
+    }
+    
+    private class GlobalExecutionContext extends AbstractExecutionContext
+    {
+
+        GlobalExecutionContext(QueryState state, QueryOptions options)
+        {
+            super(state, options);
+        }
+
+        @Override
+        public void validate() throws InvalidRequestException
+        {
+            if (cl == null)
+                throw new InvalidRequestException("Invalid empty consistency level");
+
+            cl.validateForRead(keyspace());
+        }
+
+        @Override
+        public Rows executeWithoutPager(Pageable command) throws RequestValidationException, ReadTimeoutException, UnavailableException, IsBootstrappingException
+        {
+            List<Row> rows;
+            if (command == null)
+            {
+                rows = Collections.<Row>emptyList();
+            }
+            else
+            {
+                rows = command instanceof Pageable.ReadCommands
+                     ? StorageProxy.read(((Pageable.ReadCommands)command).commands, cl)
+                     : StorageProxy.getRangeSlice((RangeSliceCommand)command, cl);
+            }
+
+            return processResults(rows, variables, limit, now);
+        }
+
+        @Override
+        public QueryPager getPager(Pageable command)
+        {
+            return QueryPagers.pager(command, cl, pagingState);
+        }
+        
+    }
+    
+    private ResultMessage.Rows executeWithContext(QueryState state, QueryOptions options, AbstractExecutionContext context) throws RequestExecutionException, RequestValidationException
+    {
+        List<ByteBuffer> variables = options.getValues();
+
+        context.validate();
 
         int limit = getLimit(variables);
         long now = System.currentTimeMillis();
@@ -213,11 +311,11 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
         if (pageSize <= 0 || command == null || !QueryPagers.mayNeedPaging(command, pageSize))
         {
-            return execute(command, cl, variables, limit, now);
+            return context.executeWithoutPager(command);
         }
         else
         {
-            QueryPager pager = QueryPagers.pager(command, cl, options.getPagingState());
+            QueryPager pager = context.getPager(command);
             if (parameters.isCount)
                 return pageCountQuery(pager, variables, pageSize, now);
 
@@ -234,21 +332,9 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
         }
     }
 
-    private ResultMessage.Rows execute(Pageable command, ConsistencyLevel cl, List<ByteBuffer> variables, int limit, long now) throws RequestValidationException, RequestExecutionException
+    public ResultMessage.Rows execute(QueryState state, QueryOptions options) throws RequestExecutionException, RequestValidationException
     {
-        List<Row> rows;
-        if (command == null)
-        {
-            rows = Collections.<Row>emptyList();
-        }
-        else
-        {
-            rows = command instanceof Pageable.ReadCommands
-                 ? StorageProxy.read(((Pageable.ReadCommands)command).commands, cl)
-                 : StorageProxy.getRangeSlice((RangeSliceCommand)command, cl);
-        }
-
-        return processResults(rows, variables, limit, now);
+       return executeWithContext(state, options, new GlobalExecutionContext(state, options));
     }
 
     private ResultMessage.Rows pageCountQuery(QueryPager pager, List<ByteBuffer> variables, int pageSize, long now) throws RequestValidationException, RequestExecutionException
@@ -285,22 +371,7 @@ public class SelectStatement implements CQLStatement, MeasurableForPreparedCache
 
     public ResultMessage.Rows executeInternal(QueryState state, QueryOptions options) throws RequestExecutionException, RequestValidationException
     {
-        List<ByteBuffer> variables = options.getValues();
-        int limit = getLimit(variables);
-        long now = System.currentTimeMillis();
-        List<Row> rows;
-        if (isKeyRange || usesSecondaryIndexing)
-        {
-            RangeSliceCommand command = getRangeCommand(variables, limit, now);
-            rows = command == null ? Collections.<Row>emptyList() : command.executeLocally();
-        }
-        else
-        {
-            List<ReadCommand> commands = getSliceCommands(variables, limit, now);
-            rows = commands == null ? Collections.<Row>emptyList() : readLocally(keyspace(), commands);
-        }
-
-        return processResults(rows, variables, limit, now);
+        return executeWithContext(state, options, new LocalExecutionContext(state, options));
     }
 
     public ResultSet process(List<Row> rows) throws InvalidRequestException

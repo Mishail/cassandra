@@ -129,6 +129,11 @@ public class QueryPagers
     {
         return pager(command, null, true, null);
     }
+    
+    public static QueryPager localPager(Pageable command, PagingState state)
+    {
+        return pager(command, null, true, state);
+    }
 
     /**
      * Convenience method to (locally) page an internal row.
