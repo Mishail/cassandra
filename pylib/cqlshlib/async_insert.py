@@ -19,6 +19,7 @@ from threading import Event, Condition
 import sys
 from greplin import scales
 from greplin.scales import meter
+import time
 
 
 class _CountDownLatch(object):
@@ -37,22 +38,20 @@ class _CountDownLatch(object):
             while self._count > 0:
                 self._lock.wait()
 
-
 class _ChainedWriter(object):
 
     CONCURRENCY = 100
 
-    num_finished = scales.IntStat('finished', value=1)
+    num_finished = scales.IntStat('finished')
     rows_inserted = meter.MeterStat('rows_inserted')
     rows_read = meter.MeterStat('rows_read')
 
     def __init__(self, session, enumerated_reader, statement_func):
-        scales.init(self, '/csv_writer')
+        scales.initChild(self, '/writer%s' % time.time())
         self._sentinel = object()
         self._session = session
         self._cancellation_event = Event()
         self._first_error = None
-        #self._num_finished = count(start=1)
         self._task_counter = _CountDownLatch(self.CONCURRENCY)
         self._enumerated_reader = enumerated_reader
         self._statement_func = statement_func

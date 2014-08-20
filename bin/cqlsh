@@ -1366,7 +1366,7 @@ class Shell(cmd.Cmd):
                 linesource.close()
             elif self.tty:
                 print
-        return rownum-1
+        return rownum
 
     def create_insert_statement(self, columns, nullval, table_meta, row):
 
