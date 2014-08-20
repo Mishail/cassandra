@@ -17,6 +17,8 @@
 from itertools import count
 from threading import Event, Condition
 import sys
+from greplin import scales
+from greplin.scales import meter
 
 
 class _CountDownLatch(object):
@@ -40,12 +42,17 @@ class _ChainedWriter(object):
 
     CONCURRENCY = 100
 
+    num_finished = scales.IntStat('finished', value=1)
+    rows_inserted = meter.MeterStat('rows_inserted')
+    rows_read = meter.MeterStat('rows_read')
+
     def __init__(self, session, enumerated_reader, statement_func):
+        scales.init(self, '/csv_writer')
         self._sentinel = object()
         self._session = session
         self._cancellation_event = Event()
         self._first_error = None
-        self._num_finished = count(start=1)
+        #self._num_finished = count(start=1)
         self._task_counter = _CountDownLatch(self.CONCURRENCY)
         self._enumerated_reader = enumerated_reader
         self._statement_func = statement_func
@@ -58,7 +65,8 @@ class _ChainedWriter(object):
             self._execute_next(self._sentinel, 0)
 
         self._task_counter.await()
-        return next(self._num_finished), self._first_error
+        print ""
+        return self.num_finished, self._first_error
 
     def _abort(self, error, failed_record):
         if not self._first_error:
@@ -75,13 +83,20 @@ class _ChainedWriter(object):
             return
 
         if result is not self._sentinel:
-            finished = next(self._num_finished)
-            if not finished % 1000:
-                sys.stdout.write('Imported %s rows\r' % finished)
+            self.num_finished += 1
+            self.rows_inserted.mark()
+            if not self.num_finished % 1000:
+                output = 'Imported %s rows; Read: %.2f rows/s; Insert: %.2f rows/s\r' % \
+                         (self.num_finished,
+                          self.rows_read['m1'] if 'm1' in self.rows_read else 0,
+                          self.rows_inserted['m1'] if 'm1' in self.rows_inserted else 0
+                          )
+                sys.stdout.write(output)
                 sys.stdout.flush()
 
         try:
             (current_record, row) = next(self._enumerated_reader)
+            self.rows_read.mark()
         except StopIteration:
             self._task_counter.count_down()
             return
