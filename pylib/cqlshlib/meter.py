@@ -39,8 +39,8 @@ class Meter(object):
         self._rows_read.mark()
 
     def mark_written(self):
-        self.num_finished += 1
         self._rows_inserted.mark()
+        self.num_finished += 1
 
     @property
     def num_finished(self):
@@ -52,9 +52,6 @@ class Meter(object):
         if self.num_finished % 1000 != 0:
             return
         output = 'Processed %s rows; Read: %.2f rows/s; Write: %.2f rows/s\r' % \
-                 (self._num_finished,
-                  self.avg_read(),
-                  self.avg_written()
-                  )
+                 (self._num_finished, self.avg_read(), self.avg_written())
         sys.stdout.write(output)
         sys.stdout.flush()
