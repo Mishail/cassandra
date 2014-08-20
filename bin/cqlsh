@@ -64,8 +64,6 @@ except ImportError:
     pass
 
 CQL_LIB_PREFIX = 'cassandra-driver-internal-only-'
-FUTURES_LIB_PREFIX = 'futures-'
-SIX_LIB_PREFIX = 'six-'
 
 CASSANDRA_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..')
 
@@ -89,12 +87,13 @@ cql_zip = find_zip(CQL_LIB_PREFIX)
 if cql_zip:
     ver = os.path.splitext(os.path.basename(cql_zip))[0][len(CQL_LIB_PREFIX):]
     sys.path.insert(0, os.path.join(cql_zip, 'cassandra-driver-' + ver))
-futures_zip = find_zip(FUTURES_LIB_PREFIX)
-if futures_zip:
-    sys.path.insert(0, futures_zip)
-six_zip = find_zip(SIX_LIB_PREFIX)
-if six_zip:
-    sys.path.insert(0, six_zip)
+
+third_parties = ('futures-', 'six-', 'scales-')
+
+for lib in third_parties:
+    lib_zip = find_zip(lib)
+    if lib_zip:
+        sys.path.insert(0, lib_zip)
 
 warnings.filterwarnings("ignore", r".*blist.*")
 try:

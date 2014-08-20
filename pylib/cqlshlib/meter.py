@@ -49,11 +49,12 @@ class Meter(object):
     @num_finished.setter
     def num_finished(self, value):
         self._num_finished = value
-        if not self.num_finished % 1000:
-            output = 'Processed %s rows; Read: %.2f rows/s; Write: %.2f rows/s\r' % \
-                     (self._num_finished,
-                      self.avg_read(),
-                      self.avg_written()
-                      )
-            sys.stdout.write(output)
-            sys.stdout.flush()
+        if self.num_finished % 1000 != 0:
+            return
+        output = 'Processed %s rows; Read: %.2f rows/s; Write: %.2f rows/s\r' % \
+                 (self._num_finished,
+                  self.avg_read(),
+                  self.avg_written()
+                  )
+        sys.stdout.write(output)
+        sys.stdout.flush()
