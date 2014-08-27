@@ -14,44 +14,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from greplin import scales
-from greplin.scales import meter
-import time
+from time import time
 import sys
+from threading import RLock
 
 
 class Meter(object):
 
-    _num_finished = scales.IntStat('finished')
-    _rows_inserted = meter.MeterStat('rows_inserted')
-    _rows_read = meter.MeterStat('rows_read')
-
     def __init__(self):
-        scales.initChild(self, '/meter%s' % time.time())
-
-    def avg_read(self):
-        return self._rows_read['m1'] if 'm1' in self._rows_read else 0
-
-    def avg_written(self):
-        return self._rows_inserted['m1'] if 'm1' in self._rows_inserted else 0
-
-    def mark_read(self):
-        self._rows_read.mark()
+        self._num_finished = 0
+        self._last_checkpoint_time = None
+        self._current_rate = 0.0
+        self._lock = RLock()
 
     def mark_written(self):
-        self._rows_inserted.mark()
-        self.num_finished += 1
+        with self._lock:
+            if not self._last_checkpoint_time:
+                self._last_checkpoint_time = time()
+            self._num_finished += 1
 
-    @property
+            if self._num_finished % 10000 == 0:
+                previous_checkpoint_time = self._last_checkpoint_time
+                self._last_checkpoint_time = time()
+                new_rate = 10000.0 / (self._last_checkpoint_time - previous_checkpoint_time)
+                if self._current_rate == 0.0:
+                    self._current_rate = new_rate
+                else:
+                    self._current_rate = (self._current_rate + new_rate) / 2.0
+
+            if self._num_finished % 1000 != 0:
+                return
+            output = 'Processed %s rows; Write: %.2f rows/s\r' % \
+                     (self._num_finished, self._current_rate)
+            sys.stdout.write(output)
+            sys.stdout.flush()
+
     def num_finished(self):
-        return self._num_finished
+        with self._lock:
+            return self._num_finished
 
-    @num_finished.setter
-    def num_finished(self, value):
-        self._num_finished = value
-        if self.num_finished % 1000 != 0:
-            return
-        output = 'Processed %s rows; Read: %.2f rows/s; Write: %.2f rows/s\r' % \
-                 (self._num_finished, self.avg_read(), self.avg_written())
-        sys.stdout.write(output)
-        sys.stdout.flush()
+    def done(self):
+        print ""
+
+

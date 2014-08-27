@@ -52,13 +52,12 @@ class _ChainedWriter(object):
     def insert(self):
         if not self._enumerated_reader:
             return 0, None
-
         for i in xrange(self.CONCURRENCY):
             self._execute_next(self._sentinel, 0)
 
         self._task_counter.await()
-        print ""
-        return self._meter.num_finished, self._first_error
+        self._meter.done()
+        return self._meter.num_finished(), self._first_error
 
     def _abort(self, error, failed_record):
         if not self._first_error:
@@ -79,7 +78,6 @@ class _ChainedWriter(object):
 
         try:
             (current_record, row) = next(self._enumerated_reader)
-            self._meter.mark_read()
         except StopIteration:
             self._task_counter.count_down()
             return

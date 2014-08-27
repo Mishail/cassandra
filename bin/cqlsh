@@ -1449,18 +1449,17 @@ class Shell(cmd.Cmd):
             if header:
                 writer.writerow(columns)
             for row in dump:
-                wmeter.mark_read()
                 fmt = lambda v: \
                     format_value(v, output_encoding=encoding, nullval=nullval,
                                  time_format=self.display_time_format,
                                  float_precision=self.display_float_precision).strval
                 writer.writerow(map(fmt, row))
                 wmeter.mark_written()
-            print ""
+            wmeter.done()
         finally:
             if do_close:
                 csvdest.close()
-        return wmeter.num_finished
+        return wmeter.num_finished()
 
     def prep_export_dump(self, ks, cf, columns):
         if columns is None:
