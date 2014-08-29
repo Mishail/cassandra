@@ -105,7 +105,7 @@ except ImportError, e:
              'Module load path: %r\n\n'
              'Error: %s\n' % (sys.executable, sys.path, e))
 
-from cassandra.cluster import Cluster
+from cassandra.cluster import Cluster, PagedResult
 from cassandra.query import SimpleStatement, ordered_dict_factory
 from cassandra.policies import WhiteListRoundRobinPolicy
 from cassandra.metadata import protect_name, protect_names, protect_value
@@ -906,7 +906,7 @@ class Shell(cmd.Cmd):
         self.tracing_enabled = tracing_was_enabled
 
     def perform_statement(self, statement, with_default_limit=False):
-        stmt = SimpleStatement(statement, consistency_level=self.consistency_level)
+        stmt = SimpleStatement(statement, consistency_level=self.consistency_level, fetch_size=10)
         result = self.perform_simple_statement(stmt,
                                                 with_default_limit=with_default_limit)
         if self.tracing_enabled:
@@ -953,8 +953,9 @@ class Shell(cmd.Cmd):
         self.decoding_errors = []
 
         self.writeresult("")
-        if rows:
-            rows = list(rows)  # this may be an iterator if the result is large enough to page
+        if isinstance(rows, PagedResult):
+            raw_input("---MORE---")
+            rows = list(rows.current_response)  # this may be an iterator if the result is large enough to page
         self.print_static_result(rows, table_meta)
         self.writeresult("(%d rows)" % len(rows or []))
 
