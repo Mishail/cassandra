@@ -147,7 +147,6 @@ DEFAULT_PROTOCOL_VERSION = 3
 
 DEFAULT_TIME_FORMAT = '%Y-%m-%d %H:%M:%S%z'
 DEFAULT_FLOAT_PRECISION = 5
-DEFAULT_SELECT_LIMIT = 10000
 DEFAULT_MAX_TRACE_WAIT = 10
 
 if readline is not None and readline.__doc__ is not None and 'libedit' in readline.__doc__:
@@ -899,16 +898,12 @@ class Shell(cmd.Cmd):
         stop_tracing = ksname == 'system_traces' or (ksname is None and self.current_keyspace == 'system_traces')
         self.tracing_enabled = self.tracing_enabled and not stop_tracing
         statement = parsed.extract_orig()
-        with_default_limit = parsed.get_binding('limit') is None
-        if with_default_limit:
-            statement = "%s LIMIT %d;" % (statement[:-1], DEFAULT_SELECT_LIMIT)
-        self.perform_statement(statement, with_default_limit=with_default_limit)
+        self.perform_statement(statement)
         self.tracing_enabled = tracing_was_enabled
 
-    def perform_statement(self, statement, with_default_limit=False):
-        stmt = SimpleStatement(statement, consistency_level=self.consistency_level, fetch_size=10)
-        result = self.perform_simple_statement(stmt,
-                                                with_default_limit=with_default_limit)
+    def perform_statement(self, statement):
+        stmt = SimpleStatement(statement, consistency_level=self.consistency_level, fetch_size=100)
+        result = self.perform_simple_statement(stmt)
         if self.tracing_enabled:
             if stmt.trace:
                 print_trace(self, stmt.trace)
@@ -924,7 +919,7 @@ class Shell(cmd.Cmd):
         cf = self.cql_unprotect_name(parsed.get_binding('cfname'))
         return self.get_table_meta(ks, cf)
 
-    def perform_simple_statement(self, statement, with_default_limit=False):
+    def perform_simple_statement(self, statement):
         if not statement:
             return False
         rows = None
@@ -941,7 +936,7 @@ class Shell(cmd.Cmd):
                 return False
 
         if statement.query_string[:6].lower() == 'select' or statement.query_string.lower().startswith("list"):
-            self.print_result(rows, with_default_limit, self.parse_for_table_meta(statement.query_string))
+            self.print_result(rows, self.parse_for_table_meta(statement.query_string))
         elif rows:
             # CAS INSERT/UPDATE
             self.writeresult("")
@@ -949,7 +944,7 @@ class Shell(cmd.Cmd):
         self.flush_output()
         return True
 
-    def print_result(self, rows, with_default_limit, table_meta):
+    def print_result(self, rows, table_meta):
         self.decoding_errors = []
 
         self.writeresult("")
@@ -984,12 +979,6 @@ class Shell(cmd.Cmd):
                 self.writeresult('%d more decoding errors suppressed.'
                                  % (len(self.decoding_errors) - 2), color=RED)
 
-        if with_default_limit:
-            if len(rows) == DEFAULT_SELECT_LIMIT:
-                self.writeresult("Default LIMIT of %d was used. "
-                                 "Specify your own LIMIT clause to get more results."
-                                 % DEFAULT_SELECT_LIMIT, color=RED)
-                self.writeresult("")
 
     def print_static_result(self, rows, table_meta):
         if not rows:
