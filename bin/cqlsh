@@ -949,8 +949,6 @@ class Shell(cmd.Cmd):
 
         self.writeresult("")
         if isinstance(rows, PagedResult) and self.tty:
-            import logging
-            logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
             num_rows = 0
             while True:
                 page = list(rows.current_response)
@@ -967,8 +965,8 @@ class Shell(cmd.Cmd):
                 else:
                     rows.current_response = iter(result)
         else:
-            rows = list(rows)
-            num_rows = len(rows or [])
+            rows = list(rows or [])
+            num_rows = len(rows)
             self.print_static_result(rows, table_meta)
         self.writeresult("(%d rows)" % num_rows)
 
