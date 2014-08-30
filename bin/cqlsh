@@ -953,11 +953,26 @@ class Shell(cmd.Cmd):
         self.decoding_errors = []
 
         self.writeresult("")
-        if isinstance(rows, PagedResult):
-            raw_input("---MORE---")
-            rows = list(rows.current_response)  # this may be an iterator if the result is large enough to page
-        self.print_static_result(rows, table_meta)
-        self.writeresult("(%d rows)" % len(rows or []))
+        if isinstance(rows, PagedResult): #and self.tty: #TODO check tty
+            import logging
+            logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
+            num_rows = 0
+            next_row = None
+            while True:
+                page = list(rows.current_response)
+                if next_row:
+                    page.insert(0, next_row)
+                num_rows += len(page)
+                self.print_static_result(page, table_meta)
+                if not rows.response_future.has_more_pages:
+                    break
+                raw_input("---MORE---")
+                next_row = next(rows)
+        else:
+            rows = list(rows)
+            num_rows = len(rows or [])
+            self.print_static_result(rows, table_meta)
+        self.writeresult("(%d rows)" % num_rows)
 
         if self.decoding_errors:
             for err in self.decoding_errors[:2]:
