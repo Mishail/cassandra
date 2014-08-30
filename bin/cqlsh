@@ -948,7 +948,7 @@ class Shell(cmd.Cmd):
         self.decoding_errors = []
 
         self.writeresult("")
-        if isinstance(rows, PagedResult): #and self.tty: #TODO check tty
+        if isinstance(rows, PagedResult) and self.tty:
             import logging
             logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
             num_rows = 0
@@ -978,7 +978,6 @@ class Shell(cmd.Cmd):
             if len(self.decoding_errors) > 2:
                 self.writeresult('%d more decoding errors suppressed.'
                                  % (len(self.decoding_errors) - 2), color=RED)
-
 
     def print_static_result(self, rows, table_meta):
         if not rows:
