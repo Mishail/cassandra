@@ -230,6 +230,7 @@ cqlsh_extra_syntax_rules = r'''
                    | <tracingCommand>
                    | <expandCommand>
                    | <exitCommand>
+                   | <pagingCommand>
                    ;
 
 <describeCommand> ::= ( "DESCRIBE" | "DESC" )
@@ -292,6 +293,9 @@ cqlsh_extra_syntax_rules = r'''
 
 <expandCommand> ::= "EXPAND" ( switch=( "ON" | "OFF" ) )?
                    ;
+
+<pagingCommand> ::= "PAGING" ( switch=( "ON" | "OFF" ) )?
+                  ;
 
 <exitCommand> ::= "exit" | "quit"
                 ;
@@ -480,6 +484,7 @@ class Shell(cmd.Cmd):
     stop = False
     last_hist = None
     shunted_query_out = None
+    use_paging = True
     csv_dialect_defaults = dict(delimiter=',', doublequote=False,
                                 escapechar='\\', quotechar='"')
 
@@ -1758,6 +1763,26 @@ class Shell(cmd.Cmd):
             else:
                 self.printerr("*** No help on %s" % (t,))
 
+    def do_paging(self, parsed):
+        """
+        PAGING [cqlsh]
+
+          Enables or disables query paging.
+
+        PAGING ON
+
+          Enables query paging for all further queries.
+
+        PAGING OFF
+
+          Disables paging.
+
+        PAGING
+
+          PAGING with no arguments shows the current query paging status.
+        """
+        self.use_paging = SwitchCommand("PAGING", "Query paging").execute(self.use_paging, parsed, self.printerr)
+
     def applycolor(self, text, color=None):
         if not color or not self.color:
             return text
@@ -1778,6 +1803,41 @@ class Shell(cmd.Cmd):
         if shownum:
             text = '%s:%d:%s' % (self.stdin.name, self.lineno, text)
         self.writeresult(text, color, newline=newline, out=sys.stderr)
+
+
+class SwitchCommand(object):
+    command = None
+    description = None
+
+    def __init__(self, command, desc):
+        self.command = command
+        self.description = desc
+
+    def execute(self, state, parsed, printerr):
+        switch = parsed.get_binding('switch')
+        if switch is None:
+            if state:
+                print "%s is currently enabled. Use %s OFF to disable" \
+                      % (self.description, self.command)
+            else:
+                print "%s is currently disabled. Use %s ON to enable." \
+                      % (self.description, self.command)
+            return state
+
+        if switch.upper() == 'ON':
+            if state:
+                printerr('%s is already enabled. Use %s OFF to disable.'
+                         % (self.description, self.command))
+                return state
+            print 'Now %s is enabled' % (self.description,)
+            return True
+
+        if switch.upper() == 'OFF':
+            if not state:
+                printerr('%s is not enabled.' % (self.description,))
+                return state
+            print 'Disabled %s.' % (self.description,)
+            return False
 
 
 def option_with_default(cparser_getter, section, option, default=None):
