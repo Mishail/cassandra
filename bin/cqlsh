@@ -1623,29 +1623,7 @@ class Shell(cmd.Cmd):
 
           TRACING with no arguments shows the current tracing status.
         """
-        switch = parsed.get_binding('switch')
-        if switch is None:
-            if self.tracing_enabled:
-                print "Tracing is currently enabled. Use TRACING OFF to disable"
-            else:
-                print "Tracing is currently disabled. Use TRACING ON to enable."
-            return
-
-        if switch.upper() == 'ON':
-            if self.tracing_enabled:
-                self.printerr('Tracing is already enabled. '
-                              'Use TRACING OFF to disable.')
-                return
-            self.tracing_enabled = True
-            print 'Now tracing requests.'
-            return
-
-        if switch.upper() == 'OFF':
-            if not self.tracing_enabled:
-                self.printerr('Tracing is not enabled.')
-                return
-            self.tracing_enabled = False
-            print 'Disabled tracing.'
+        self.tracing_enabled = SwitchCommand("TRACING", "Tracing").execute(self.tracing_enabled, parsed, self.printerr)
 
     def do_expand(self, parsed):
         """
@@ -1665,29 +1643,7 @@ class Shell(cmd.Cmd):
 
           EXPAND with no arguments shows the current value of expand setting.
         """
-        switch = parsed.get_binding('switch')
-        if switch is None:
-            if self.expand_enabled:
-                print "Expanded output is currently enabled. Use EXPAND OFF to disable"
-            else:
-                print "Expanded output is currently disabled. Use EXPAND ON to enable."
-            return
-
-        if switch.upper() == 'ON':
-            if self.expand_enabled:
-                self.printerr('Expanded output is already enabled. '
-                              'Use EXPAND OFF to disable.')
-                return
-            self.expand_enabled = True
-            print 'Now printing expanded output'
-            return
-
-        if switch.upper() == 'OFF':
-            if not self.expand_enabled:
-                self.printerr('Expanded output is not enabled.')
-                return
-            self.expand_enabled = False
-            print 'Disabled expanded output.'
+        self.expand_enabled = SwitchCommand("EXPAND", "Expanded output").execute(self.expand_enabled, parsed, self.printerr)
 
     def do_consistency(self, parsed):
         """
