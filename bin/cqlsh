@@ -203,6 +203,7 @@ my_commands_ending_with_newline = (
     'debug',
     'tracing',
     'expand',
+    'paging',
     'exit',
     'quit'
 )
@@ -487,6 +488,7 @@ class Shell(cmd.Cmd):
     use_paging = True
     csv_dialect_defaults = dict(delimiter=',', doublequote=False,
                                 escapechar='\\', quotechar='"')
+    default_page_size = 100
 
     def __init__(self, hostname, port, color=False,
                  username=None, password=None, encoding=None, stdin=None, tty=True,
@@ -907,7 +909,7 @@ class Shell(cmd.Cmd):
         self.tracing_enabled = tracing_was_enabled
 
     def perform_statement(self, statement):
-        stmt = SimpleStatement(statement, consistency_level=self.consistency_level, fetch_size=100 if self.use_paging else None)
+        stmt = SimpleStatement(statement, consistency_level=self.consistency_level, fetch_size=self.default_page_size if self.use_paging else None)
         result = self.perform_simple_statement(stmt)
         if self.tracing_enabled:
             if stmt.trace:
@@ -957,6 +959,8 @@ class Shell(cmd.Cmd):
             num_rows = 0
             while True:
                 page = list(rows.current_response)
+                if not page:
+                    break
                 num_rows += len(page)
                 self.print_static_result(page, table_meta)
                 if not rows.response_future.has_more_pages:
